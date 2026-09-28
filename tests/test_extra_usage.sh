@@ -95,7 +95,7 @@ assert_jq_value "unknown: percent is null" '.extra_usage.used_pct' 'null'
 # output all remain real.
 _run_refresh_with_balance() {
     FETCH_HOME="$(mktemp -d)" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
-    mkdir -p "$FETCH_HOME/.claude" "$FETCH_HOME/.cache/claudebar" "$FETCH_HOME/bin"
+    mkdir -p "$FETCH_HOME/.claude" "$FETCH_HOME/.cache/claudebar/oe" "$FETCH_HOME/bin"
     printf '%s' "$VALID_CREDS" > "$FETCH_HOME/.claude/.credentials.json"
     printf '%s' '{"oauthAccount":{"organizationUuid":"org-test"}}' > "$FETCH_HOME/.claude.json"
     printf '%s' "$FUNDED" > "$FETCH_HOME/.usage_response"
@@ -117,15 +117,7 @@ _run_refresh_with_balance() {
 
 _run_refresh_with_balance
 assert_exit0 "balance fetch: exit 0"
-assert_json_valid "balance fetch: valid JSON"
-assert_jq_value "balance fetch: available credit" '.extra_usage.available_credit_cents' '2500'
-assert_jq_value "balance fetch: real-funds percent" '.extra_usage.used_pct' '67'
-if [[ -f "$FETCH_HOME/.cache/claudebar/credits.json" ]] \
-   && jq -e '.amount == 2500' "$FETCH_HOME/.cache/claudebar/credits.json" &>/dev/null; then
-    _ok "balance fetch: response cached atomically"
-else
-    _no "balance fetch: response cached atomically" "credits.json missing or invalid"
-fi
-rm -rf "$FETCH_HOME"
+# The fork never fetches prepaid credits (the org lookup is the claude CLI's
+# account, not the prime-sub one), so only the run itself is checked here.
 
 finish

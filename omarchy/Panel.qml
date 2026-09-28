@@ -137,6 +137,13 @@ Panel {
     startRun(buildCmd(force === true))
   }
 
+  // prime-sub account on show (oe / yb), from the last document of any kind.
+  property string account: ""
+
+  function switchAccount() {
+    startRun(["--json", "--toggle-account"])
+  }
+
   function startRun(args) {
     if (statusProc.running) { pendingCmd = args; return }
     collectorDone = false
@@ -244,6 +251,11 @@ Panel {
       setError(binName + " returned an unexpected document (not schema_version 2) — mismatched CLI version?")
       return
     }
+    if (typeof d.account === "string" && d.account !== "") {
+      // Another account's numbers must never sit under this one's name.
+      if (usage && usage.account !== d.account) usage = null
+      account = d.account
+    }
     if (d.loading === true) {
       // Understood transient state (network settling, no cached data yet).
       loading = true
@@ -315,8 +327,10 @@ Panel {
   readonly property var barWindowData: windowById(barWindowSetting === "Weekly" ? "weekly" : "session")
 
   readonly property string barLabel: {
-    if (!showLabel || vertical || !barWindowData) return ""
-    return Math.round(Number(barWindowData.used_pct || 0)) + "%"
+    if (!showLabel || vertical) return ""
+    var tag = account.toUpperCase()
+    if (!barWindowData) return tag
+    return (tag !== "" ? tag + " " : "") + Math.round(Number(barWindowData.used_pct || 0)) + "%"
   }
 
   // The percentage the bar shows, and the gauge color for exactly that value —
@@ -797,7 +811,10 @@ Panel {
       onActivateRequested: root.refresh(true)
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
-      onTextKey: function(t) { if (t === "r" || t === "R") root.refresh(true) }
+      onTextKey: function(t) {
+        if (t === "r" || t === "R") root.refresh(true)
+        else if (t === "s" || t === "S") root.switchAccount()
+      }
 
       Flickable {
         id: panelFlick

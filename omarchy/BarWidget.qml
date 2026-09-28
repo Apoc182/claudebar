@@ -38,6 +38,8 @@ BarWidget {
     if ("anchorItem" in target) target.anchorItem = button
     if ("hostWidget" in target) target.hostWidget = root
     if ("bundledCmd" in target) target.bundledCmd = root.bundledCmd
+    // This fork's CLI lives in the clone; the AUR claudebar on PATH knows no prime-sub.
+    if ("resolvedBin" in target && root.bundledCmd !== "") target.resolvedBin = root.bundledCmd
   }
 
   function refresh() {
@@ -130,7 +132,7 @@ BarWidget {
     onPressed: function(b) {
       if (b === Qt.MiddleButton) root.refreshForce()
       else if (b === Qt.RightButton) {
-        if (root.bar) root.bar.run("xdg-open https://claude.ai/settings/usage")
+        if (root.panelItem && root.panelItem.switchAccount) root.panelItem.switchAccount()
       } else root.togglePanel()
     }
 

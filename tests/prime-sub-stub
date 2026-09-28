@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Test stand-in for `prime-sub token <name>`: hands out the fixture's token.
+jq -ce --arg a "$2" '{account:$a, live:true, access:(.claudeAiOauth.accessToken|strings), expires:.claudeAiOauth.expiresAt}' \
+    "$HOME/.claude/.credentials.json" 2>/dev/null || { echo "$2 is logged out" >&2; exit 1; }

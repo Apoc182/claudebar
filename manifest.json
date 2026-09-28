@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "mryll.claudebar",
   "name": "Claudebar",
-  "version": "0.10.4",
+  "version": "0.10.4-prime.1",
   "author": "mryll",
   "license": "MIT",
-  "description": "Claude AI plan usage (claudebar) in the Omarchy bar: session, weekly, and per-model limits with pacing.",
+  "description": "Claude plan usage for the prime-sub accounts (oe / yb) in the Omarchy bar. Fork of mryll/claudebar.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Claude Usage",
-    "description": "Click: usage panel. Middle click: force refresh. Right click: open the claude.ai usage page.",
+    "description": "Click: usage panel. Middle click: force refresh. Right click (or S in the panel): switch between the oe and yb prime-sub accounts.",
     "category": "AI",
     "allowMultiple": false,
     "defaultSection": "right",

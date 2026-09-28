@@ -37,31 +37,31 @@ printf "%s\n%s" "${STUB_BODY:-}" "$STUB_CODE"
 _run_ra() {
     local cache_spec="$1" ra_spec="$2"; shift 2
     THOME="$(mktemp -d)" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
-    mkdir -p "$THOME/.claude" "$THOME/.cache/claudebar" "$THOME/bin" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
+    mkdir -p "$THOME/.claude" "$THOME/.cache/claudebar/oe" "$THOME/bin" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
     printf '%s' "$STUB" > "$THOME/bin/curl" && chmod +x "$THOME/bin/curl" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
     printf '#!/usr/bin/env bash\nexit 0\n' > "$THOME/bin/notify-send" && chmod +x "$THOME/bin/notify-send"
     printf '%s' "$VALID_CREDS" > "$THOME/.claude/.credentials.json" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
     local now; now=$(date +%s)
     if [[ "$cache_spec" == "old" ]]; then
-        printf '%s' "$USAGE" > "$THOME/.cache/claudebar/usage.json"
-        touch -d "@$(( now - 1200 ))" "$THOME/.cache/claudebar/usage.json"
+        printf '%s' "$USAGE" > "$THOME/.cache/claudebar/oe/usage.json"
+        touch -d "@$(( now - 1200 ))" "$THOME/.cache/claudebar/oe/usage.json"
     fi
     case "$ra_spec" in
-        future)  printf '%s' "$(( now + 600 ))" > "$THOME/.cache/claudebar/.retry_at" ;;
-        past)    printf '%s' "$(( now - 10 ))"  > "$THOME/.cache/claudebar/.retry_at" ;;
-        huge)    printf '9999999999'            > "$THOME/.cache/claudebar/.retry_at" ;;
-        garbage) printf 'abc'                   > "$THOME/.cache/claudebar/.retry_at" ;;
-        dir)     mkdir "$THOME/.cache/claudebar/.retry_at" ;;
+        future)  printf '%s' "$(( now + 600 ))" > "$THOME/.cache/claudebar/oe/.retry_at" ;;
+        past)    printf '%s' "$(( now - 10 ))"  > "$THOME/.cache/claudebar/oe/.retry_at" ;;
+        huge)    printf '9999999999'            > "$THOME/.cache/claudebar/oe/.retry_at" ;;
+        garbage) printf 'abc'                   > "$THOME/.cache/claudebar/oe/.retry_at" ;;
+        dir)     mkdir "$THOME/.cache/claudebar/oe/.retry_at" ;;
     esac
     OUT=$(run_pinned "$THOME" "$SCRIPT" "$@"); RC=$?
     return 0
 }
 
 curl_calls() { cat "$THOME/.curl_count" 2>/dev/null || echo 0; }
-_retry_at()  { cat "$THOME/.cache/claudebar/.retry_at" 2>/dev/null || echo 0; }
+_retry_at()  { cat "$THOME/.cache/claudebar/oe/.retry_at" 2>/dev/null || echo 0; }
 assert_calls()      { local c; c=$(curl_calls); [[ "$c" == "$2" ]] && _ok "$1" || _no "$1" "curl calls=$c want=$2"; }
-assert_no_marker()  { [[ ! -f "$THOME/.cache/claudebar/.retry_at" ]] && _ok "$1" || _no "$1" ".retry_at present: $(_retry_at)"; }
-assert_stale()      { [[ -f "$THOME/.cache/claudebar/.stale" ]] && _ok "$1" || _no "$1" ".stale missing"; }
+assert_no_marker()  { [[ ! -f "$THOME/.cache/claudebar/oe/.retry_at" ]] && _ok "$1" || _no "$1" ".retry_at present: $(_retry_at)"; }
+assert_stale()      { [[ -f "$THOME/.cache/claudebar/oe/.stale" ]] && _ok "$1" || _no "$1" ".stale missing"; }
 # assert_marker_within <name> <min-seconds-ahead> <max-seconds-ahead>
 assert_marker_within() {
     local now ahead; now=$(date +%s); ahead=$(( $(_retry_at) - now ))
@@ -95,21 +95,21 @@ rm -rf "$THOME"
 # A token refresh that works removes .last_error; the marker outlives it.
 STUB_CODE=200 STUB_BODY="$FRESH" _run_ra old future
 assert_tip_has "live marker, no .last_error: tooltip reports the wait" "Retry at"
-[[ "$(head -c3 "$THOME/.cache/claudebar/.last_error" 2>/dev/null)" == "429" ]] \
+[[ "$(head -c3 "$THOME/.cache/claudebar/oe/.last_error" 2>/dev/null)" == "429" ]] \
     && _ok "live marker, no .last_error: rewritten as a 429" \
-    || _no "live marker, no .last_error: rewritten as a 429" ".last_error: $(cat "$THOME/.cache/claudebar/.last_error" 2>/dev/null)"
+    || _no "live marker, no .last_error: rewritten as a 429" ".last_error: $(cat "$THOME/.cache/claudebar/oe/.last_error" 2>/dev/null)"
 rm -rf "$THOME"
 
 # --- ...and a newer error is not overwritten by the marker -----------------
 THOME="$(mktemp -d)" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
-mkdir -p "$THOME/.claude" "$THOME/.cache/claudebar" "$THOME/bin" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
+mkdir -p "$THOME/.claude" "$THOME/.cache/claudebar/oe" "$THOME/bin" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
 printf '%s' "$STUB" > "$THOME/bin/curl" && chmod +x "$THOME/bin/curl"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$THOME/bin/notify-send" && chmod +x "$THOME/bin/notify-send"
 printf '%s' "$VALID_CREDS" > "$THOME/.claude/.credentials.json"
-printf '%s' "$USAGE" > "$THOME/.cache/claudebar/usage.json"
-touch -d "@$(( $(date +%s) - 1200 ))" "$THOME/.cache/claudebar/usage.json"
-printf '%s' "$(( $(date +%s) + 600 ))" > "$THOME/.cache/claudebar/.retry_at"
-printf '401\nRefresh failed' > "$THOME/.cache/claudebar/.last_error"
+printf '%s' "$USAGE" > "$THOME/.cache/claudebar/oe/usage.json"
+touch -d "@$(( $(date +%s) - 1200 ))" "$THOME/.cache/claudebar/oe/usage.json"
+printf '%s' "$(( $(date +%s) + 600 ))" > "$THOME/.cache/claudebar/oe/.retry_at"
+printf '401\nRefresh failed' > "$THOME/.cache/claudebar/oe/.last_error"
 OUT=$(STUB_CODE=200 STUB_BODY="$FRESH" run_pinned "$THOME" "$SCRIPT"); RC=$?
 assert_exit0   "live marker + newer error: exit 0"
 assert_calls   "live marker + newer error: did NOT ask" 0
@@ -128,11 +128,11 @@ assert_tip_has        "first 429, no cache: tooltip reports the wait" "Retry at"
 assert_marker_within  "first 429, no cache: .retry_at ~990s ahead" 960 995
 _keep="$THOME"; _marker=$(_retry_at)
 THOME="$(mktemp -d)" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
-mkdir -p "$THOME/.claude" "$THOME/.cache/claudebar" "$THOME/bin" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
+mkdir -p "$THOME/.claude" "$THOME/.cache/claudebar/oe" "$THOME/bin" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
 printf '%s' "$STUB" > "$THOME/bin/curl" && chmod +x "$THOME/bin/curl"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$THOME/bin/notify-send" && chmod +x "$THOME/bin/notify-send"
 printf '%s' "$VALID_CREDS" > "$THOME/.claude/.credentials.json"
-printf '%s' "$_marker" > "$THOME/.cache/claudebar/.retry_at"
+printf '%s' "$_marker" > "$THOME/.cache/claudebar/oe/.retry_at"
 OUT=$(STUB_CODE=200 STUB_BODY="$FRESH" run_pinned "$THOME" "$SCRIPT"); RC=$?
 assert_exit0   "second run inside the window, no cache: exit 0"
 assert_calls   "second run inside the window, no cache: did NOT ask" 0
@@ -157,12 +157,12 @@ _hdr_case "header past nine digits is capped at 6 h"     "1234567890123456789012
 STUB_CODE=429 STUB_RETRY_AFTER='TZ="/dev/stdin" 00:00' STUB_BODY='{"error":{"message":"x"}}' _run_ra old none
 rm -rf "$THOME"
 THOME="$(mktemp -d)" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
-mkdir -p "$THOME/.claude" "$THOME/.cache/claudebar" "$THOME/bin" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
+mkdir -p "$THOME/.claude" "$THOME/.cache/claudebar/oe" "$THOME/bin" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
 printf '%s' "$STUB" > "$THOME/bin/curl" && chmod +x "$THOME/bin/curl"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$THOME/bin/notify-send" && chmod +x "$THOME/bin/notify-send"
 printf '%s' "$VALID_CREDS" > "$THOME/.claude/.credentials.json"
-printf '%s' "$USAGE" > "$THOME/.cache/claudebar/usage.json"
-touch -d "@$(( $(date +%s) - 1200 ))" "$THOME/.cache/claudebar/usage.json"
+printf '%s' "$USAGE" > "$THOME/.cache/claudebar/oe/usage.json"
+touch -d "@$(( $(date +%s) - 1200 ))" "$THOME/.cache/claudebar/oe/usage.json"
 exec 3< <(sleep 60) # an open pipe with no data: the write end lives in the sleep
 _t0=$SECONDS
 OUT=$(STUB_CODE=429 STUB_RETRY_AFTER='TZ="/dev/stdin" 00:00' STUB_BODY='{"error":{"message":"x"}}' \
@@ -189,8 +189,8 @@ STUB_CODE=200 STUB_BODY="$FRESH" _run_ra old garbage
 assert_calls     "garbage marker: ignored, asked once" 1
 rm -rf "$THOME"
 STUB_CODE=200 STUB_BODY="$FRESH" _run_ra old none
-printf '%s%22s%s' "$(( $(date +%s) + 600 ))" "" "junk" > "$THOME/.cache/claudebar/.retry_at"
-touch -d "@$(( $(date +%s) - 1200 ))" "$THOME/.cache/claudebar/usage.json"
+printf '%s%22s%s' "$(( $(date +%s) + 600 ))" "" "junk" > "$THOME/.cache/claudebar/oe/.retry_at"
+touch -d "@$(( $(date +%s) - 1200 ))" "$THOME/.cache/claudebar/oe/usage.json"
 OUT=$(STUB_CODE=200 STUB_BODY="$FRESH" run_pinned "$THOME" "$SCRIPT"); RC=$?
 assert_calls     "truncated marker (epoch + padding + junk): ignored, asked twice" 2
 rm -rf "$THOME"
@@ -201,8 +201,8 @@ assert_exit0      "dir at .retry_at: exit 0"
 assert_json_valid "dir at .retry_at: valid JSON"
 assert_text_has   "dir at .retry_at: shows cached pct" "42%"
 _plain .tooltip | grep -qF "Retry at" && _no "dir at .retry_at: no wait announced" "tooltip promises a wait" || _ok "dir at .retry_at: no wait announced"
-[[ -d "$THOME/.cache/claudebar/.retry_at" ]] && _ok "dir at .retry_at: the directory is untouched" || _no "dir at .retry_at: the directory is untouched" "gone"
-compgen -G "$THOME/.cache/claudebar/.retry_at.*" >/dev/null && _no "dir at .retry_at: no temp left behind" "$(ls -a "$THOME/.cache/claudebar/")" || _ok "dir at .retry_at: no temp left behind"
+[[ -d "$THOME/.cache/claudebar/oe/.retry_at" ]] && _ok "dir at .retry_at: the directory is untouched" || _no "dir at .retry_at: the directory is untouched" "gone"
+compgen -G "$THOME/.cache/claudebar/oe/.retry_at.*" >/dev/null && _no "dir at .retry_at: no temp left behind" "$(ls -a "$THOME/.cache/claudebar/oe/")" || _ok "dir at .retry_at: no temp left behind"
 rm -rf "$THOME"
 
 # --- ...and --refresh does not get a free pass ------------------------------

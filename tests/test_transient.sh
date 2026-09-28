@@ -21,32 +21,32 @@ USAGE='{"five_hour":{"utilization":42,"resets_at":"2100-01-01T00:00:00Z"},"seven
 _run_transient() {
     local stub="$1" cache_spec="$2" nw_spec="${3:-}"
     THOME="$(mktemp -d)" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
-    mkdir -p "$THOME/.claude" "$THOME/.cache/claudebar" "$THOME/bin" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
+    mkdir -p "$THOME/.claude" "$THOME/.cache/claudebar/oe" "$THOME/bin" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
     printf '%s' "$stub" > "$THOME/bin/curl" && chmod +x "$THOME/bin/curl" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
     printf '#!/usr/bin/env bash\nexit 0\n' > "$THOME/bin/notify-send" && chmod +x "$THOME/bin/notify-send"
     printf '%s' "$VALID_CREDS" > "$THOME/.claude/.credentials.json" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
     local now; now=$(date +%s)
     case "$cache_spec" in
-        old)    printf '%s' "$USAGE" > "$THOME/.cache/claudebar/usage.json"
-                touch -d "@$(( now - 1200 ))" "$THOME/.cache/claudebar/usage.json" ;;
-        young)  printf '%s' "$USAGE" > "$THOME/.cache/claudebar/usage.json"
-                touch -d "@$(( now - 120 ))" "$THOME/.cache/claudebar/usage.json" ;;
-        future) printf '%s' "$USAGE" > "$THOME/.cache/claudebar/usage.json"
-                touch -d "@$(( now + 3600 ))" "$THOME/.cache/claudebar/usage.json" ;;
+        old)    printf '%s' "$USAGE" > "$THOME/.cache/claudebar/oe/usage.json"
+                touch -d "@$(( now - 1200 ))" "$THOME/.cache/claudebar/oe/usage.json" ;;
+        young)  printf '%s' "$USAGE" > "$THOME/.cache/claudebar/oe/usage.json"
+                touch -d "@$(( now - 120 ))" "$THOME/.cache/claudebar/oe/usage.json" ;;
+        future) printf '%s' "$USAGE" > "$THOME/.cache/claudebar/oe/usage.json"
+                touch -d "@$(( now + 3600 ))" "$THOME/.cache/claudebar/oe/usage.json" ;;
         none)   : ;;
     esac
     case "$nw_spec" in
-        now)    touch "$THOME/.cache/claudebar/.net_wait" ;;
-        future) touch -d "@$(( now + 3600 ))" "$THOME/.cache/claudebar/.net_wait" ;;
+        now)    touch "$THOME/.cache/claudebar/oe/.net_wait" ;;
+        future) touch -d "@$(( now + 3600 ))" "$THOME/.cache/claudebar/oe/.net_wait" ;;
     esac
     OUT=$(run_pinned "$THOME" "$SCRIPT"); RC=$?
     return 0
 }
 
 curl_calls() { cat "$THOME/.curl_count" 2>/dev/null || echo 0; }
-assert_no_stale()   { [[ ! -f "$THOME/.cache/claudebar/.stale" ]] && _ok "$1" || _no "$1" ".stale was written"; }
-assert_net_wait()   { [[ -f "$THOME/.cache/claudebar/.net_wait" ]] && _ok "$1" || _no "$1" ".net_wait missing"; }
-assert_no_net_wait(){ [[ ! -f "$THOME/.cache/claudebar/.net_wait" ]] && _ok "$1" || _no "$1" ".net_wait was written"; }
+assert_no_stale()   { [[ ! -f "$THOME/.cache/claudebar/oe/.stale" ]] && _ok "$1" || _no "$1" ".stale was written"; }
+assert_net_wait()   { [[ -f "$THOME/.cache/claudebar/oe/.net_wait" ]] && _ok "$1" || _no "$1" ".net_wait missing"; }
+assert_no_net_wait(){ [[ ! -f "$THOME/.cache/claudebar/oe/.net_wait" ]] && _ok "$1" || _no "$1" ".net_wait was written"; }
 
 COUNT_FAIL_STUB='#!/usr/bin/env bash
 cnt="$HOME/.curl_count"
@@ -145,8 +145,8 @@ assert_json_valid  "hard 500: valid JSON"
 assert_text_has    "hard 500: shows cached pct" "42%"
 assert_text_has    "hard 500: shows the pause mark" ""
 assert_tip_has     "hard 500: tooltip explains" "stale (API errors)"
-[[ -f "$THOME/.cache/claudebar/.stale" ]] && _ok "hard 500: .stale persisted" || _no "hard 500: .stale persisted" "marker missing"
-[[ -f "$THOME/.cache/claudebar/.last_error" ]] && _ok "hard 500: .last_error written" || _no "hard 500: .last_error written" "file missing"
+[[ -f "$THOME/.cache/claudebar/oe/.stale" ]] && _ok "hard 500: .stale persisted" || _no "hard 500: .stale persisted" "marker missing"
+[[ -f "$THOME/.cache/claudebar/oe/.last_error" ]] && _ok "hard 500: .last_error written" || _no "hard 500: .last_error written" "file missing"
 rm -rf "$THOME"
 
 finish

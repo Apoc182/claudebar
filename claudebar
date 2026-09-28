@@ -156,6 +156,8 @@ TOOLTIP_PACE_PTS=false
 TOOLTIP_FONT="JetBrainsMono Nerd Font, JetBrainsMono Nerd Font Mono, monospace"
 JSON_MODE=false
 FORCE_REFRESH=false
+ACCOUNT=""
+TOGGLE_ACCOUNT=false
 NO_COLOR_SET=false
 NO_COLOR_WHAT=""
 
@@ -171,8 +173,8 @@ for _a in "$@"; do [[ "$_a" == "--json" ]] && JSON_MODE=true && break; done
 cli_error() {
     if [[ "$JSON_MODE" == "true" ]]; then
         if command -v jq &>/dev/null; then
-            jq -nc --arg m "$1" \
-                '{schema_version:2, error:{message:$m}, loading:false, windows:[], extra_usage:null}'
+            jq -nc --arg m "$1" --arg acct "${ACCOUNT:-}" \
+                '{schema_version:2, account:$acct, error:{message:$m}, loading:false, windows:[], extra_usage:null}'
         else
             printf '{"schema_version":2,"error":{"message":"invalid arguments"},"loading":false,"windows":[],"extra_usage":null}\n'
         fi
@@ -243,6 +245,10 @@ while [[ $# -gt 0 ]]; do
         --remaining) REMAINING=true; shift ;;
         --json) shift ;;  # already picked up by the pre-scan
         --refresh) FORCE_REFRESH=true; shift ;;
+        --account)
+            [[ $# -ge 2 ]] || cli_error "--account requires a value"
+            ACCOUNT="$2"; shift 2 ;;
+        --toggle-account) TOGGLE_ACCOUNT=true; shift ;;
         --no-color) NO_COLOR_SET=true; NO_COLOR_WHAT="all"; shift ;;
         --no-color=*)
             NO_COLOR_SET=true; NO_COLOR_WHAT="${1#*=}"
@@ -295,13 +301,29 @@ PACE_TOLERANCE=$((10#$PACE_TOLERANCE))
 # In remaining mode, default the bar to "what's left" unless the user set their own format.
 [[ "$REMAINING" == "true" && "$FORMAT_SET" == "false" ]] && FORMAT="{session_remaining_pct}% · {session_reset}"
 
-CREDS="$HOME/.claude/.credentials.json"
 API_URL="https://api.anthropic.com/api/oauth/usage"
 API_BASE_URL="https://api.anthropic.com"
-TOKEN_URL="https://platform.claude.com/v1/oauth/token"
-CLIENT_ID="9d1c250a-e61b-44d9-88ed-5944d1962f5e" # Claude CLI OAuth client ID
-REFRESH_BUFFER=300 # refresh 5 min before expiry
 CACHE_DIR="$HOME/.cache/claudebar"
+
+# --- Prime Agent subs (fork) ---
+# Logins come from `prime-sub token <name>`, never from ~/.claude. prime-sub is
+# the only thing that refreshes them: a second refresher would rotate the
+# refresh token under Prime Agent and log it out. The account on show is kept
+# in a state file; with none, it is the sub Prime Agent is running on.
+ACCOUNTS=(oe yb)
+ACCOUNT_STATE="${XDG_STATE_HOME:-$HOME/.local/state}/claudebar/account"
+PRIME_SUB="${CLAUDEBAR_PRIME_SUB:-prime-sub}"
+if [[ -z "$ACCOUNT" ]]; then
+    ACCOUNT=$(head -c 16 "$ACCOUNT_STATE" 2>/dev/null | tr -dc 'a-z') || ACCOUNT=""
+    [[ -n "$ACCOUNT" ]] || ACCOUNT=$(head -c 16 "$HOME/.prime/subs/active" 2>/dev/null | tr -dc 'a-z') || ACCOUNT=""
+    [[ -n "$ACCOUNT" ]] || ACCOUNT="${ACCOUNTS[0]}"
+fi
+if [[ "$TOGGLE_ACCOUNT" == "true" ]]; then
+    [[ "$ACCOUNT" == "${ACCOUNTS[0]}" ]] && ACCOUNT="${ACCOUNTS[1]}" || ACCOUNT="${ACCOUNTS[0]}"
+    mkdir -p "${ACCOUNT_STATE%/*}" && printf '%s\n' "$ACCOUNT" > "$ACCOUNT_STATE"
+fi
+[[ " ${ACCOUNTS[*]} " == *" $ACCOUNT "* ]] || cli_error "--account must be one of: ${ACCOUNTS[*]}"
+CACHE_DIR="$CACHE_DIR/$ACCOUNT"
 CACHE_TTL=60 # seconds
 
 # A 429 from the usage endpoint carries a `Retry-After` header. Honour it. A
@@ -730,8 +752,8 @@ die() {
         _m="${_m//<b>/}"; _m="${_m//<\/b>/}"
         _m="${_m//\\n/ }"; _m="${_m//$'\n'/ }"
         if command -v jq &>/dev/null; then
-            jq -nc --arg m "$_m" \
-                '{schema_version:2, error:{message:$m}, loading:false, windows:[], extra_usage:null}'
+            jq -nc --arg m "$_m" --arg acct "${ACCOUNT:-}" \
+                '{schema_version:2, account:$acct, error:{message:$m}, loading:false, windows:[], extra_usage:null}'
         else
             _m="${_m//\\/\\\\}"; _m="${_m//\"/\\\"}"
             printf '{"schema_version":2,"error":{"message":"%s"},"loading":false,"windows":[],"extra_usage":null}\n' "$_m"
@@ -755,7 +777,7 @@ die() {
 # doesn't draw attention to a state that will self-resolve on the next dispatch.
 loading_network() {
     if [[ "$JSON_MODE" == "true" ]]; then
-        jq -nc '{schema_version:2, error:null, loading:true, windows:[], extra_usage:null}'
+        jq -nc --arg acct "${ACCOUNT:-}" '{schema_version:2, account:$acct, error:null, loading:true, windows:[], extra_usage:null}'
         exit 0
     fi
     jq -nc \
@@ -1025,15 +1047,21 @@ calc_pacing() {
 for cmd in curl jq date dd; do
     command -v "$cmd" &>/dev/null || die "Missing dependency: $cmd"
 done
-[[ -f "$CREDS" ]] || die "No credentials.\nRun <b>claude</b> to log in."
+command -v "$PRIME_SUB" &>/dev/null || die "Missing dependency: prime-sub"
 
-# --- Read credentials (initial — static fields only; mutable fields re-read under lock) ---
-# Bounded: a rejected or truncated read leaves `creds` empty, and the jq check
-# below turns that into the same actionable message a corrupt file already got.
-creds=$(read_bounded "$CREDS" "$MAX_STATE_BYTES") || creds=""
-jq -e . <<< "$creds" &>/dev/null || die "Invalid credentials file.\nRun <b>claude</b> to log in."
-sub_type=$(jq -r 'try (.claudeAiOauth.subscriptionType // "unknown") catch "unknown"' <<< "$creds")
-rate_tier=$(jq -r 'try (.claudeAiOauth.rateLimitTier // "") catch ""' <<< "$creds")
+# --- Read credentials from prime-sub ---
+# Stderr carries prime-sub's reason ("yb is logged out: ..."); it becomes the
+# error line. The token is checked by token_is_safe before any curl sees it.
+_ps_err=$(mktemp) || die "Cannot create temp file."
+creds=$(timeout 40 "$PRIME_SUB" token "$ACCOUNT" 2>"$_ps_err") || creds=""
+_ps_msg=$(head -c 300 "$_ps_err" | tr '\n' ' '); rm -f "$_ps_err"
+if ! jq -e '.access | strings' <<< "$creds" &>/dev/null; then
+    die "${ACCOUNT^^}: ${_ps_msg:-no login from prime-sub}\nRun <b>prime-sub login $ACCOUNT</b>."
+fi
+account_live=$(jq -r 'if .live then "true" else "false" end' <<< "$creds")
+sub_type="${ACCOUNT^^}"
+[[ "$account_live" == "true" ]] && sub_type+=" · live"
+rate_tier=""
 
 # --- Cache / lock setup ---
 mkdir -p "$CACHE_DIR" 2>/dev/null || die "Cannot create cache dir.\n$CACHE_DIR is not writable."
@@ -1214,73 +1242,6 @@ _fetch_usage() {
     fi
 }
 
-_fetch_balance() {
-    # No usage-credit ledger means there is nothing to query. Keep this
-    # best-effort: usage windows must remain available even if the separate
-    # prepaid endpoint is unavailable or changes upstream.
-    local _has_credits
-    _has_credits=$(jq 'try (.extra_usage != null) catch false' <<< "$usage" 2>/dev/null) || _has_credits=false
-    [[ "$_has_credits" == "true" && "$auth_ok" == "true" ]] || return 0
-
-    local _org_uuid="${CLAUDE_CODE_ORGANIZATION_UUID:-}"
-    if [[ -z "$_org_uuid" ]]; then
-        # This file belongs to the CLI, not to us, so it is read like every
-        # other foreign file: through read_bounded, and handed to jq on stdin
-        # instead of letting jq open the path. `[[ -f ]]` alone let a regular
-        # file of any size through, and jq on a file that keeps growing may
-        # never finish — inside the shell process that is the whole shell.
-        # An oversize read degrades to "no organization UUID", which is the
-        # branch this function already takes when the file is not there.
-        local _claude_json
-        _claude_json=$(read_bounded "$HOME/.claude.json" "$MAX_CLAUDE_JSON_BYTES") || _claude_json=""
-        if read_was_truncated "$_claude_json" "$MAX_CLAUDE_JSON_BYTES"; then _claude_json=""; fi
-        _org_uuid=$(jq -r 'try ((.oauthAccount.organizationUuid | strings) // "") catch ""' \
-            <<< "$_claude_json" 2>/dev/null) || _org_uuid=""
-    fi
-    # The identifier is inserted into a URL path, so reject anything beyond
-    # Claude's UUID-like alphabet instead of letting account data shape curl.
-    [[ "$_org_uuid" =~ ^[A-Za-z0-9-]+$ ]] || return 0
-
-    local _credits_age=-1
-    if [[ -f "$credits_file" ]]; then
-        _credits_age=$(( now_s - $(date -r "$credits_file" +%s) ))
-    fi
-    if [[ "$FORCE_REFRESH" != "true" ]] && (( _credits_age >= 0 && _credits_age < CACHE_TTL )); then
-        return
-    fi
-
-    local _credits_url="${API_BASE_URL}/api/oauth/organizations/${_org_uuid}/prepaid/credits"
-    local _credits_raw _credits_code _credits_body
-    # Feed the bearer header through stdin so the token never appears in the
-    # curl argv/process list, and through the guarded builder so it cannot
-    # carry option lines of its own.
-    _credits_raw=$(curl_auth_cfg "$access_token" | curl -q --config - -s --max-time 10 \
-        --proto '=https' --max-filesize "$MAX_RESP_BYTES" \
-        -w '\n%{http_code}' "$_credits_url") || true
-    # Same belt as the usage fetch; there is no retry loop here to break out of,
-    # so an oversize capture just becomes "no answer" and the cache is left be.
-    if resp_too_big "$_credits_raw"; then _credits_raw=""; fi
-    _credits_code="${_credits_raw##*$'\n'}"
-    _credits_body="${_credits_raw%$'\n'"$_credits_code"}"
-    [[ "$_credits_code" =~ ^[0-9]{3}$ ]] || _credits_code="000"
-
-    if [[ "$_credits_code" == "200" ]] && jq -e -s '
-        length == 1 and (.[0] | type) == "object"
-        and ((.[0].amount | type) == "number")
-        and (.[0].amount >= 0) and (.[0].amount <= 1e12)
-      ' <<< "$_credits_body" &>/dev/null; then
-        local _btmp
-        _btmp=$(mktemp "$CACHE_DIR/.credits.XXXXXX" 2>/dev/null) || _btmp=""
-        if [[ -n "$_btmp" ]]; then
-            if printf '%s' "$_credits_body" > "$_btmp" && mv "$_btmp" "$credits_file"; then
-                :
-            else
-                rm -f "$_btmp" 2>/dev/null || true
-            fi
-        fi
-    fi
-}
-
 # --- Acquire lock for the state-changing window (refresh + usage fetch) ---
 # Multi-monitor: peer instances may rotate the refresh_token between our initial
 # read and our refresh attempt; locking and re-reading prevents a stale-token
@@ -1337,162 +1298,23 @@ if (( cache_age > NET_BOOT_CACHE_AGE )); then
 fi
 net_deadline=$(( SECONDS + net_budget ))
 
-# Re-read mutable credential fields under the lock.
-[[ -f "$CREDS" ]] || die "No credentials.\nRun <b>claude</b> to log in."
-creds=$(read_bounded "$CREDS" "$MAX_STATE_BYTES") || creds=""
-jq -e . <<< "$creds" &>/dev/null || die "Invalid credentials file.\nRun <b>claude</b> to log in."
-access_token=$(jq -r 'try (.claudeAiOauth.accessToken // empty) catch empty' <<< "$creds")
+access_token=$(jq -r 'try (.access // empty) catch empty' <<< "$creds")
 # A token that cannot go into a curl config file is not a token this script can
 # use at all, so it is dropped here and the empty check below reports it the
 # way a missing one is reported. Rejecting at the SOURCE, not at the call site,
 # is what keeps every later use safe.
 token_is_safe "$access_token" || access_token=""
-refresh_token=$(jq -r 'try (.claudeAiOauth.refreshToken // empty) catch empty' <<< "$creds")
-expires_at=$(jq -r 'try (.claudeAiOauth.expiresAt // 0) catch 0' <<< "$creds")
-expires_at="${expires_at%%.*}" # truncate float (e.g. 5000.0 → 5000)
-[[ "$expires_at" =~ ^[0-9]+$ ]] || expires_at=0
-expires_s=$(( expires_at / 1000 ))
+[[ -n "$access_token" ]] || die "${ACCOUNT^^}: no usable token.\nRun <b>prime-sub login $ACCOUNT</b>."
+# prime-sub hands out tokens with a minute or more left and refreshes them
+# itself, so there is no refresh here: a second refresher would rotate the
+# refresh token under Prime Agent and log it out.
 auth_ok=true
 refresh_failure_kind=""
 transient_stale=false
 
-[[ -n "$access_token" ]] || die "No token.\nRun <b>claude</b> to log in."
-
-# The write-back temp is staged BEFORE the POST, and beside its target. Both
-# halves matter. Same-directory: a bare mktemp lands in /tmp, which is a tmpfs
-# here — a different filesystem from ~/.claude — where `mv` degrades from
-# rename(2) to copy+unlink and an interruption can leave a torn credentials
-# file (issue #5). Before the POST: a 200 from the token endpoint may ROTATE
-# the refresh token and invalidate the stored one, so a refresh whose result
-# cannot be persisted must not run at all — skipping it leaves the stored
-# tokens untouched for the next run to retry.
-cred_tmp=""
-if (( expires_s < now_s + REFRESH_BUFFER )); then
-    cred_tmp=$(mktemp "${CREDS%/*}/.credentials.XXXXXX" 2>/dev/null) || cred_tmp=""
-    if [[ -z "$cred_tmp" ]]; then
-        auth_ok=false
-        refresh_failure_kind="transient"
-    fi
-fi
-
-if [[ -n "$cred_tmp" ]]; then
-    # Synchronous refresh — 25s timeout covers cold boot when DHCP is still settling.
-    # Transient failures (no HTTP response) are retried until the shared deadline —
-    # same policy as the usage fetch — so a cold-boot race doesn't cost a full interval.
-    # The refresh token goes to jq through the ENVIRONMENT, not through
-    # `--arg`: an argument sits in jq's own /proc/<pid>/cmdline, which is world
-    # readable, and moving the secret out of curl's argv while leaving it in
-    # jq's argv moves nothing. /proc/<pid>/environ is readable by the owner of
-    # the process only. $CLIENT_ID stays an argument — it is the public Claude
-    # CLI client ID, not a secret.
-    refresh_body=$(rt="$refresh_token" jq -nc --arg ci "$CLIENT_ID" \
-                     '{grant_type:"refresh_token", client_id:$ci, refresh_token:$ENV.rt}')
-    while :; do
-        # The secret here is the POST BODY, not a header: `--data "$refresh_body"`
-        # puts the refresh token straight into argv. `--data @-` reads it from
-        # stdin instead. The body is compact single-line JSON, so the newline
-        # stripping that @- applies changes nothing. None of these headers is
-        # secret, so they stay on the command line.
-        refresh_raw=$(printf '%s' "$refresh_body" | curl -q -s --max-time 25 \
-            --proto '=https' --max-filesize "$MAX_RESP_BYTES" \
-            -w '\n%{http_code}' -X POST "$TOKEN_URL" \
-            -H "Content-Type: application/json" \
-            -H "anthropic-beta: oauth-2025-04-20" \
-            -H "User-Agent: claude-cli/1.0" \
-            --data @-) || true
-        # Belt for --max-filesize on a chunked body; see the usage fetch.
-        if resp_too_big "$refresh_raw"; then
-            refresh_raw=""
-            refresh_code="000"
-            resp=""
-            break
-        fi
-        refresh_code="${refresh_raw##*$'\n'}"
-        resp="${refresh_raw%$'\n'"$refresh_code"}"
-        # Normalize bogus codes (e.g. raw body without curl write-out suffix) to 000.
-        [[ "$refresh_code" =~ ^[0-9]{3}$ ]] || refresh_code="000"
-        if [[ "$refresh_code" != "000" ]]; then break; fi
-        if (( SECONDS >= net_deadline )); then break; fi
-        sleep "$NET_RETRY_DELAY"
-    done
-
-    # The refreshed token is the SECOND way one reaches the curl config, and it
-    # comes off the wire, so it is validated exactly like the stored one. A
-    # non-string or option-carrying `.access_token` now fails the refresh
-    # instead of being written back into the credentials file.
-    _new_token=$(jq -r 'try ((.access_token | strings) // "") catch ""' <<< "$resp" 2>/dev/null) || _new_token=""
-    if [[ "$refresh_code" == "200" ]] && token_is_safe "$_new_token"; then
-        access_token="$_new_token"
-        new_refresh=$(jq -r '.refresh_token // empty' <<< "$resp")
-        expires_in=$(jq -r 'try (((.expires_in | numbers) // 0) | floor | if (. > 1e12 or . < 0) then 0 else . end) catch 0' <<< "$resp")
-        expires_in="${expires_in%%.*}" # truncate float (e.g. 3600.0 → 3600)
-        [[ "$expires_in" =~ ^[0-9]+$ ]] || expires_in=3600
-        new_expires_at=$(( $(date +%s) * 1000 + expires_in * 1000 ))
-
-        # Re-read before replacing: the flock serializes claudebar instances,
-        # but NOT the claude CLI, and the POST above takes seconds. If the file
-        # changed under us (or the re-read comes back truncated), the CLI
-        # refreshed on its own — its tokens are the fresher ones, so ours are
-        # dropped instead of overwriting its write. Best-effort mitigation, not
-        # a CAS: the check-then-rename window is milliseconds, and a writer
-        # landing inside it still gets clobbered.
-        current=$(read_bounded "$CREDS" "$MAX_STATE_BYTES") || current=""
-        if [[ "$current" == "$creds" ]] && ! read_was_truncated "$current" "$MAX_STATE_BYTES"; then
-            # Both tokens reach jq through the environment for the same reason
-            # as the request body above: `--arg at "$access_token"` publishes
-            # the fresh bearer in jq's command line to every process of this
-            # user. The expiry is a number and public, so it stays an argument.
-            at="$access_token" rt="${new_refresh:-$refresh_token}" \
-            jq --argjson ea "$new_expires_at" \
-               '.claudeAiOauth.accessToken=$ENV.at | .claudeAiOauth.refreshToken=$ENV.rt | .claudeAiOauth.expiresAt=$ea' \
-               <<< "$creds" > "$cred_tmp" && mv "$cred_tmp" "$CREDS" \
-               || rm -f "$cred_tmp" 2>/dev/null || true
-        else
-            rm -f "$cred_tmp" 2>/dev/null || true
-        fi
-        rm -f "$CACHE_DIR/.last_error" 2>/dev/null || true
-    else
-        auth_ok=false
-        rm -f "$cred_tmp" 2>/dev/null || true
-        if [[ "$refresh_code" == "000" ]]; then
-            # No HTTP response reached us — DHCP/DNS settling at boot, offline,
-            # or actual timeout. Mark the episode so sibling instances skip
-            # their own long wait; nothing else persists.
-            refresh_failure_kind="transient"
-            if [[ "$net_long" == "true" ]]; then touch "$net_wait_marker" 2>/dev/null || true; fi
-        else
-            refresh_failure_kind="hard"
-            # Always write a current .last_error so the tooltip reflects this refresh
-            # failure, never a leftover entry from a previous /usage call.
-            refresh_err=""
-            if [[ "$refresh_code" =~ ^[45][0-9]{2}$ ]]; then
-                # platform.claude.com returns OAuth-style {error,error_description};
-                # fall back to Anthropic-style {error:{message}} or bare {error:"<str>"}.
-                refresh_err=$(jq -r '
-                    if (.error_description | type) == "string" then .error_description
-                    elif (.error | type) == "object" and (.error | has("message")) and (.error.message | type) == "string" then .error.message
-                    elif (.error | type) == "string" then .error
-                    else "" end' <<< "$resp" 2>/dev/null) || true
-                [[ -z "$refresh_err" ]] && refresh_err="Refresh failed"
-            else
-                refresh_err="Invalid refresh response"
-            fi
-            # Best-effort write — never abort the widget if the cache dir is unwriteable.
-            _le_tmp=$(mktemp "$CACHE_DIR/.last_error.XXXXXX" 2>/dev/null) || _le_tmp=""
-            if [[ -n "$_le_tmp" ]]; then
-                if printf '%s\n%s' "$refresh_code" "$refresh_err" > "$_le_tmp" 2>/dev/null \
-                   && mv "$_le_tmp" "$CACHE_DIR/.last_error" 2>/dev/null; then
-                    :
-                else
-                    rm -f "$_le_tmp" 2>/dev/null || true
-                fi
-            fi
-        fi
-    fi
-fi
-
 _fetch_usage
-_fetch_balance
+# No _fetch_balance: it finds the org through ~/.claude.json, which is the
+# claude CLI's account, not the prime-sub account on show.
 exec 9>&-
 
 # A corrupt or partially-written cache could leave $usage as invalid JSON; the
@@ -1944,6 +1766,7 @@ if [[ "$JSON_MODE" == "true" ]]; then
 
     jq -nc \
         --arg plan "$plan" --arg state "$class" --argjson max_pct "$max_pct" \
+        --arg acct "$ACCOUNT" --argjson live "$account_live" \
         --arg pal_low "$BAR_COLOR_LOW" --arg pal_mid "$BAR_COLOR_MID" \
         --arg pal_high "$BAR_COLOR_HIGH" --arg pal_critical "$BAR_COLOR_CRITICAL" \
         --argjson pal_stops "$_json_stops" \
@@ -1952,7 +1775,7 @@ if [[ "$JSON_MODE" == "true" ]]; then
         --arg updated "$_json_updated" --argjson age "$_json_age" \
         --argjson stale "$_json_stale" --arg stale_reason "$_json_stale_reason" \
         --argjson last_error "$_json_last_error" \
-        '{schema_version:2, error:null, loading:false,
+        '{schema_version:2, account:$acct, live:$live, error:null, loading:false,
           plan:$plan, state:$state, max_pct:$max_pct,
           windows:$windows, extra_usage:$extra,
           palette:{low:$pal_low, mid:$pal_mid, high:$pal_high, critical:$pal_critical,
@@ -1980,6 +1803,7 @@ apply_format() {
     local text="$1"
     text="${text//\{icon\}/󰚩}"
     text="${text//\{plan\}/$plan}"
+    text="${text//\{account\}/${ACCOUNT^^}}"
     text="${text//\{session_pct\}/$session_pct}"
     text="${text//\{session_reset\}/$s_cd_val}"
     text="${text//\{session_elapsed\}/$session_elapsed}"

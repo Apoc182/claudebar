@@ -22,7 +22,9 @@ assert_exit0     "exit 0"
 assert_json_valid "valid JSON"
 assert_no_pango  "no Pango markup"
 assert_jq "schema_version"        '.schema_version'          '2'
-assert_jq "plan label"            '.plan'                    'Max'
+assert_jq "plan label"            '.plan'                    'OE · live'
+assert_jq "account"               '.account'                 'oe'
+assert_jq "live"                  '.live'                    'true'
 assert_jq "session used_pct"      '.windows[0].used_pct'     '42'
 assert_jq "session remaining_pct" '.windows[0].remaining_pct' '58'
 assert_jq "session id"            '.windows[0].id'           'session'
@@ -134,10 +136,10 @@ echo "== palette follows the active Omarchy theme (both layouts)"
 run_themed_json() {
     local rel="$1" body="$2"; shift 2
     local home; home="$(mktemp -d)" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
-    mkdir -p "$home/.claude" "$home/.cache/claudebar" "$home/bin" "$home/$rel"
+    mkdir -p "$home/.claude" "$home/.cache/claudebar/oe" "$home/bin" "$home/$rel"
     printf '#!/usr/bin/env bash\nexit 1\n' > "$home/bin/curl" && chmod +x "$home/bin/curl"
     printf '%s' "$VALID_CREDS" > "$home/.claude/.credentials.json"
-    printf '%s' "$MIN" > "$home/.cache/claudebar/usage.json"
+    printf '%s' "$MIN" > "$home/.cache/claudebar/oe/usage.json"
     printf '%s' "$body" > "$home/$rel/colors.toml"
     OUT=$(run_pinned "$home" "$SCRIPT" --json "$@"); RC=$?
     rm -rf "$home"
@@ -192,10 +194,10 @@ run_pywal_json() {
     [[ "${1:-}" == "--omarchy" ]] && { with_theme=1; shift; }
     local home; home="$(mktemp -d)" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
     local cache_rel="${CACHE_REL:-.cache}"
-    mkdir -p "$home/.claude" "$home/.cache/claudebar" "$home/bin" "$home/$cache_rel/wal"
+    mkdir -p "$home/.claude" "$home/.cache/claudebar/oe" "$home/bin" "$home/$cache_rel/wal"
     printf '#!/usr/bin/env bash\nexit 1\n' > "$home/bin/curl" && chmod +x "$home/bin/curl"
     printf '%s' "$VALID_CREDS" > "$home/.claude/.credentials.json"
-    printf '%s' "$MIN" > "$home/.cache/claudebar/usage.json"
+    printf '%s' "$MIN" > "$home/.cache/claudebar/oe/usage.json"
     [[ -n "$wal" ]] && printf '%s' "$wal" > "$home/$cache_rel/wal/colors.json"
     if [[ -n "$with_theme" ]]; then
         mkdir -p "$home/.local/state/omarchy/current/theme"
@@ -318,9 +320,9 @@ assert_json_valid "color name: valid JSON"
 echo "== die() messages carry no literal backslash-n"
 run_claudebar_creds '{}' "$MIN" --json
 assert_jq "structured error is one flat line" '.error.message | test("\\\\n") | not' 'true'
-assert_jq "structured error keeps its words"  '.error.message | test("Run claude to log in")' 'true'
+assert_jq "structured error keeps its words"  '.error.message | test("Run prime-sub login oe")' 'true'
 run_claudebar_creds '{}' "$MIN"
-assert_tip_has "waybar tooltip breaks the line for real" "No token."
+assert_tip_has "waybar tooltip breaks the line for real" "oe is logged out"
 _nl_count=$(jq -r '.tooltip' <<<"$OUT" | wc -l)
 [[ "$_nl_count" -eq 2 ]] && _ok "waybar tooltip is two rendered lines" \
     || _no "waybar tooltip is two rendered lines" "got $_nl_count"
@@ -380,11 +382,11 @@ echo "== cache.age_s clamps at 0 on future mtime (clock skew)"
 # must clamp at 0, never go negative.
 run_future_cache_json() {  # <usage-json>
     local home; home="$(mktemp -d)" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
-    mkdir -p "$home/.claude" "$home/.cache/claudebar" "$home/bin"
+    mkdir -p "$home/.claude" "$home/.cache/claudebar/oe" "$home/bin"
     printf '#!/usr/bin/env bash\nexit 1\n' > "$home/bin/curl" && chmod +x "$home/bin/curl"
     printf '%s' "$VALID_CREDS" > "$home/.claude/.credentials.json"
-    printf '%s' "$1" > "$home/.cache/claudebar/usage.json"
-    touch -d '+2 hours' "$home/.cache/claudebar/usage.json"
+    printf '%s' "$1" > "$home/.cache/claudebar/oe/usage.json"
+    touch -d '+2 hours' "$home/.cache/claudebar/oe/usage.json"
     OUT=$(run_pinned "$home" env \
         CLAUDEBAR_TEST_NET_QUICK_BUDGET=0 CLAUDEBAR_TEST_NET_LONG_BUDGET=0 CLAUDEBAR_TEST_NET_RETRY_DELAY=0 \
         "$SCRIPT" --json); RC=$?
@@ -403,11 +405,11 @@ assert_jq "healthy: error is null" '.error' 'null'
 # Seed a .last_error (as a failed refresh/fetch would) and check the shape.
 run_with_last_error_json() {  # <usage-json> <code> <message>
     local home; home="$(mktemp -d)" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
-    mkdir -p "$home/.claude" "$home/.cache/claudebar" "$home/bin"
+    mkdir -p "$home/.claude" "$home/.cache/claudebar/oe" "$home/bin"
     printf '#!/usr/bin/env bash\nexit 1\n' > "$home/bin/curl" && chmod +x "$home/bin/curl"
     printf '%s' "$VALID_CREDS" > "$home/.claude/.credentials.json"
-    printf '%s' "$1" > "$home/.cache/claudebar/usage.json"
-    printf '%s\n%s' "$2" "$3" > "$home/.cache/claudebar/.last_error"
+    printf '%s' "$1" > "$home/.cache/claudebar/oe/usage.json"
+    printf '%s\n%s' "$2" "$3" > "$home/.cache/claudebar/oe/.last_error"
     OUT=$(run_pinned "$home" "$SCRIPT" --json); RC=$?
     rm -rf "$home"
     return 0

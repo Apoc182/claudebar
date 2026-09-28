@@ -5,21 +5,22 @@
 set -uo pipefail
 SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/claudebar"
 PASS=0; FAIL=0
+export CLAUDEBAR_PRIME_SUB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/prime-sub-stub"
 
 VALID_CREDS='{"claudeAiOauth":{"accessToken":"x","refreshToken":"y","expiresAt":4102444800000,"subscriptionType":"max","rateLimitTier":"default"}}'
 
 _run() {  # <creds-json> <usage-json> [args...]
     local creds="$1" usage="$2"; shift 2
     local home; home="$(mktemp -d)" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
-    mkdir -p "$home/.claude" "$home/.cache/claudebar" "$home/bin" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
+    mkdir -p "$home/.claude" "$home/.cache/claudebar/oe" "$home/bin" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
     printf '#!/usr/bin/env bash\nexit 1\n' > "$home/bin/curl" && chmod +x "$home/bin/curl" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
     printf '%s' "$creds" > "$home/.claude/.credentials.json"      || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
     printf '%s' '{"oauthAccount":{"organizationUuid":"org-test"}}' > "$home/.claude.json" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
-    printf '%s' "$usage" > "$home/.cache/claudebar/usage.json"     || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
+    printf '%s' "$usage" > "$home/.cache/claudebar/oe/usage.json"     || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
     if [[ -n "${CLAUDEBAR_TEST_CREDITS_JSON:-}" ]]; then
-        printf '%s' "$CLAUDEBAR_TEST_CREDITS_JSON" > "$home/.cache/claudebar/credits.json" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
+        printf '%s' "$CLAUDEBAR_TEST_CREDITS_JSON" > "$home/.cache/claudebar/oe/credits.json" || { echo "HARNESS SETUP FAILED" >&2; exit 1; }
     fi
-    touch "$home/.cache/claudebar/usage.json"
+    touch "$home/.cache/claudebar/oe/usage.json"
     OUT=$(run_pinned "$home" "$SCRIPT" "$@"); RC=$?
     rm -rf "$home"
     return 0
