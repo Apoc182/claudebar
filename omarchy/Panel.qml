@@ -116,7 +116,12 @@ Panel {
   // The command that runs. PATH first, always: the AUR release must win
   // when it exists. Changes to bundledCmd only after a failed START, and
   // keeps that value until the shell restarts.
-  property string resolvedBin: binName
+  // This fork's CLI lives in the clone; the AUR claudebar on PATH knows no prime-sub.
+  readonly property string forkBin: {
+    var u = String(Qt.resolvedUrl("../claudebar"))
+    return u.indexOf("file://") === 0 ? decodeURIComponent(u.substring(7)) : binName
+  }
+  property string resolvedBin: forkBin
 
   // Set by BarWidget.qml: path of the script inside the plugin clone.
   // Empty = no fallback.
