@@ -5,6 +5,7 @@
 set -uo pipefail
 SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/claudebar"
 PASS=0; FAIL=0
+export CLAUDEBAR_NO_WATCH=1
 export CLAUDEBAR_PRIME_SUB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/prime-sub-stub"
 
 VALID_CREDS='{"claudeAiOauth":{"accessToken":"x","refreshToken":"y","expiresAt":4102444800000,"subscriptionType":"max","rateLimitTier":"default"}}'

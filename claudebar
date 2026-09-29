@@ -1322,6 +1322,44 @@ exec 9>&-
 # payload here (degrades to a clear warning, still exit 0).
 jq -e -s 'length == 1' <<< "$usage" &>/dev/null || die "Invalid usage data.\nWill refresh next cycle."
 
+# --- Reset notifications (fork) ---
+# A window seen at 100% leaves a marker holding its reset time. Once that time
+# passes, whichever run gets to delete the marker first sends one notification.
+# The account not on show is fetched in the background every PEEK_EVERY
+# seconds, so its markers get written too. CLAUDEBAR_NO_WATCH turns all of
+# this off (tests, and the background fetch itself).
+PEEK_EVERY=600
+_watch_resets() {
+    local dir="${ACCOUNT_STATE%/*}/full" now k r at f acct win other
+    mkdir -p "$dir" 2>/dev/null || return 0
+    now=$(date +%s)
+    while read -r k r; do
+        at=$(date -d "$r" +%s 2>/dev/null) || continue
+        (( at > now )) && printf '%s\n' "$at" > "$dir/$ACCOUNT-$k"
+    done < <(jq -r 'try (to_entries[] | select(.key == "five_hour" or .key == "seven_day")
+                     | select((.value | type) == "object" and ((.value.utilization // 0) >= 100))
+                     | "\(.key) \(.value.resets_at // "")") catch empty' <<< "$usage" 2>/dev/null)
+    for f in "$dir"/*-five_hour "$dir"/*-seven_day; do
+        [[ -f "$f" ]] || continue
+        at=$(head -c 20 "$f" | tr -dc '0-9')
+        [[ -n "$at" ]] && (( at <= now )) || continue
+        rm "$f" 2>/dev/null || continue # another instance already told you
+        acct="${f##*/}"; win="${acct#*-}"; acct="${acct%%-*}"
+        [[ "$win" == "five_hour" ]] && win="Session" || win="Weekly"
+        notify-send -a "Claude" -i dialog-information "Claude ${acct^^}: $win limit reset" \
+            "Back to 0%." 2>/dev/null || true
+    done
+    [[ "$ACCOUNT" == "${ACCOUNTS[0]}" ]] && other="${ACCOUNTS[1]}" || other="${ACCOUNTS[0]}"
+    f="$dir/.peek-$other"
+    [[ -z "${CLAUDEBAR_PEEK:-}" ]] || return 0 # this run IS the peek
+    if [[ ! -f "$f" ]] || (( now - $(date -r "$f" +%s) >= PEEK_EVERY )); then
+        touch "$f"
+        CLAUDEBAR_PEEK=1 setsid "$0" --json --account "$other" >/dev/null 2>&1 < /dev/null &
+        disown 2>/dev/null || true
+    fi
+}
+[[ -n "${CLAUDEBAR_NO_WATCH:-}" ]] || _watch_resets
+
 # --- Parse windows ---
 # round in jq -> integer literal. A bare float ("13.0") fed to printf '%.0f'
 # is rejected as "invalid number" under comma-decimal locales (es_AR, de_DE, ...),

@@ -50,9 +50,8 @@ check "fallback gated on !sawExit or exec-failure codes" \
 check "a run that exited empty never claims not-installed" \
                                            grep -qF 'produced no output (exit ' "$panel"
 
-# -- PATH first, always: the resolved command starts as the bare name, and the
-#    bundled path only ever replaces it, never precedes it.
-check "resolvedBin starts at binName"      grep -qF 'property string resolvedBin: binName' "$panel"
+# -- Fork: the clone's own script first; the AUR one on PATH knows no prime-sub.
+check "resolvedBin starts at the clone"    grep -qF 'property string resolvedBin: forkBin' "$panel"
 check "fallback only from the PATH name"   grep -qF 'resolvedBin === binName && bundledCmd !== ""' "$panel"
 
 # -- URL -> path derivation: segment-wise decode, no naive scheme strip.
