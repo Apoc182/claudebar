@@ -333,6 +333,15 @@ CACHE_TTL=60 # seconds
 # api.anthropic.com: `retry-after: 990`, against a 300 s interval.
 RETRY_AFTER_MAX=$((6 * 3600)) # cap for a bogus or hostile header
 
+# A 429 can also come with no wait at all: `retry-after: 0`, or no header.
+# Asking again on every poll then keeps the token's quota drained for good
+# (Nov 2026: the OE login answered 429 to every claudebar poll for three days
+# while prime-sub, asking every 10 min with the same token, mostly got 200).
+# So such a 429 backs off on its own: BACKOFF_BASE, doubling per consecutive
+# 429, capped at BACKOFF_MAX. A 200 resets the run.
+BACKOFF_BASE=300
+BACKOFF_MAX=1800
+
 # Byte caps for everything this script did not write itself. The plugin runs
 # INSIDE the long-lived omarchy-shell process, so a read that never returns
 # does not degrade the widget — it takes the shell with it.
@@ -1070,6 +1079,7 @@ credits_file="$CACHE_DIR/credits.json"
 stale_marker="$CACHE_DIR/.stale"
 net_wait_marker="$CACHE_DIR/.net_wait"
 retry_at_marker="$CACHE_DIR/.retry_at"
+backoff_marker="$CACHE_DIR/.backoff"
 _lockfile="$CACHE_DIR/.fetch.lock"
 
 _fetch_usage() {
@@ -1200,6 +1210,15 @@ _fetch_usage() {
     # again. The time is announced only once it is on disk — a wait that was
     # not kept is a wait the next run will not honour.
     local _retry_note=""
+    if [[ "$_http_code" == "429" ]] && (( _retry_secs == 0 )); then
+        local _strikes
+        _strikes=$(read_bounded "$backoff_marker" 8) || _strikes=""
+        _strikes="${_strikes//[[:space:]]/}"
+        [[ "$_strikes" =~ ^[0-9]{1,2}$ ]] || _strikes=0
+        _retry_secs=$(( BACKOFF_BASE << (_strikes > 5 ? 5 : _strikes) ))
+        (( _retry_secs > BACKOFF_MAX )) && _retry_secs=$BACKOFF_MAX
+        write_atomic "$backoff_marker" ".backoff.XXXXXX" "$(( _strikes + 1 ))" || true
+    fi
     if [[ "$_http_code" == "429" ]] && (( _retry_secs > 0 )); then
         _retry_at=$(( $(date +%s) + _retry_secs ))
         if persist_retry_at "$_retry_at"; then
@@ -1211,7 +1230,7 @@ _fetch_usage() {
         usage="$_resp_body"
         _ctmp=$(mktemp "$CACHE_DIR/.usage.XXXXXX")
         printf '%s' "$usage" > "$_ctmp" && mv "$_ctmp" "$cache_file" || rm -f "$_ctmp"
-        rm -f "$stale_marker" "$net_wait_marker" "$retry_at_marker" "$CACHE_DIR/.last_error" 2>/dev/null || true
+        rm -f "$stale_marker" "$net_wait_marker" "$retry_at_marker" "$backoff_marker" "$CACHE_DIR/.last_error" 2>/dev/null || true
     elif [[ "$_http_code" == "000" ]]; then
         # No HTTP response after the retry budget — network still settling or
         # offline. Mark the episode so sibling instances skip their own long

@@ -170,7 +170,7 @@ OUT=$(STUB_CODE=429 STUB_RETRY_AFTER='TZ="/dev/stdin" 00:00' STUB_BODY='{"error"
 exec 3<&-
 (( SECONDS - _t0 < 15 )) && _ok "TZ-prefixed header: did not hang on stdin" || _no "TZ-prefixed header: did not hang on stdin" "took $(( SECONDS - _t0 ))s rc=$RC"
 assert_exit0     "TZ-prefixed header: exit 0"
-assert_no_marker "TZ-prefixed header: no marker written"
+assert_marker_within "TZ-prefixed header: ignored, the default backoff applies" 290 300
 rm -rf "$THOME"
 
 # --- A glob in the API message stays a glob in the tooltip -----------------
@@ -236,12 +236,33 @@ STUB_BODY='{"error":{"message":"Rate limited."}}' \
 assert_marker_within "absurd header: clamped to 6 h" 21500 21600
 rm -rf "$THOME"
 
-# --- No header: the old behavior, untouched --------------------------------
+# --- No usable wait: back off on our own, doubling, and a 200 resets it -----
 STUB_CODE=429 STUB_BODY='{"error":{"message":"Rate limited."}}' _run_ra old none
-assert_exit0      "429 without header: exit 0"
-assert_text_has   "429 without header: shows cached pct" "42%"
-assert_stale      "429 without header: .stale persisted"
-assert_no_marker  "429 without header: no marker written"
+assert_exit0          "429 without header: exit 0"
+assert_text_has       "429 without header: shows cached pct" "42%"
+assert_stale          "429 without header: .stale persisted"
+assert_marker_within  "429 without header: backs off ~300s" 290 300
+assert_tip_has        "429 without header: tooltip reports the wait" "Retry at"
+rm -rf "$THOME"
+
+STUB_CODE=429 STUB_RETRY_AFTER=0 STUB_BODY='{"error":{"message":"Rate limited."}}' _run_ra old none
+assert_marker_within  "retry-after 0: backs off ~300s" 290 300
+printf '%s' "$(( $(date +%s) - 10 ))" > "$THOME/.cache/claudebar/oe/.retry_at"
+OUT=$(STUB_CODE=429 STUB_RETRY_AFTER=0 STUB_BODY='{"error":{"message":"x"}}' run_pinned "$THOME" "$SCRIPT"); RC=$?
+assert_marker_within  "second 429 in a row: backs off ~600s" 590 600
+printf '9' > "$THOME/.cache/claudebar/oe/.backoff"
+printf '%s' "$(( $(date +%s) - 10 ))" > "$THOME/.cache/claudebar/oe/.retry_at"
+OUT=$(STUB_CODE=429 STUB_RETRY_AFTER=0 STUB_BODY='{"error":{"message":"x"}}' run_pinned "$THOME" "$SCRIPT"); RC=$?
+assert_marker_within  "many 429s: capped at 30 min" 1790 1800
+printf '%s' "$(( $(date +%s) - 10 ))" > "$THOME/.cache/claudebar/oe/.retry_at"
+OUT=$(STUB_CODE=200 STUB_BODY="$FRESH" run_pinned "$THOME" "$SCRIPT"); RC=$?
+assert_no_marker      "200 after backoff: marker cleared"
+[[ ! -e "$THOME/.cache/claudebar/oe/.backoff" ]] && _ok "200 after backoff: strike count reset" || _no "200 after backoff: strike count reset" "$(cat "$THOME/.cache/claudebar/oe/.backoff")"
+rm -rf "$THOME"
+
+# --- A header wait does not count as a strike ------------------------------
+STUB_CODE=429 STUB_RETRY_AFTER=990 STUB_BODY='{"error":{"message":"x"}}' _run_ra old none
+[[ ! -e "$THOME/.cache/claudebar/oe/.backoff" ]] && _ok "header wait: no strike" || _no "header wait: no strike" "strike written"
 rm -rf "$THOME"
 
 # --- Blocked with nothing cached still emits valid JSON, exit 0 ------------
