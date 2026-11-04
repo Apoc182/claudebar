@@ -413,7 +413,9 @@ token_is_safe() { # token_is_safe TOKEN
 # must not reach curl.
 curl_auth_cfg() { # curl_auth_cfg TOKEN
     token_is_safe "$1" || return 1
-    printf 'header = "Authorization: Bearer %s"\nheader = "anthropic-beta: oauth-2025-04-20"\n' "$1"
+    # The usage endpoint answers 429 (`retry-after: 0`) to every User-Agent but
+    # Claude Code's, curl's own and prime-agent's included (Nov 2026, OE login).
+    printf 'header = "Authorization: Bearer %s"\nheader = "anthropic-beta: oauth-2025-04-20"\nuser-agent = "claude-code/2.1.0"\n' "$1"
 }
 
 # Every curl below starts with `-q`, and it has to be the FIRST argument. curl
@@ -1226,7 +1228,8 @@ _fetch_usage() {
         fi
     fi
 
-    if [[ "$_http_code" == "200" ]] && [[ -n "$_resp_body" ]] && jq -e '.five_hour' <<< "$_resp_body" &>/dev/null; then
+    # `five_hour` is null, not absent, while no session window is open.
+    if [[ "$_http_code" == "200" ]] && [[ -n "$_resp_body" ]] && jq -e 'type == "object" and has("five_hour")' <<< "$_resp_body" &>/dev/null; then
         usage="$_resp_body"
         _ctmp=$(mktemp "$CACHE_DIR/.usage.XXXXXX")
         printf '%s' "$usage" > "$_ctmp" && mv "$_ctmp" "$cache_file" || rm -f "$_ctmp"
