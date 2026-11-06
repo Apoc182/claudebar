@@ -1424,6 +1424,9 @@ display_bar() {  # <used_pct> <elapsed> [marker_on]  (marker_on: pass "$TOOLTIP_
 
 session_pct=$(parse_pct five_hour)
 session_reset=$(parse_reset five_hour)
+# Verified Ultra accounts have no 5-hour limit (Anthropic, 30 Oct 2026): the API
+# sends "five_hour": null for them, and there is no Session window to show.
+has_session=$(jq 'try (.five_hour != null) catch true' <<< "$usage")
 weekly_pct=$(parse_pct seven_day)
 weekly_reset=$(parse_reset seven_day)
 
@@ -1726,10 +1729,12 @@ if [[ "$JSON_MODE" == "true" ]]; then
     # thing. `group` names the meter a window belongs to (a model), `label`
     # names the window inside it.
     _win_objs=()
-    _win_objs+=("$(json_window session Session "" "$SESSION_WINDOW" \
-        "$session_pct" "$session_reset" "$session_elapsed" \
-        "$session_pace" "$session_pace_indicator" "$session_pace_delta" \
-        "$session_pace_pct" "$session_pace_pts")")
+    if [[ "$has_session" == "true" ]]; then
+        _win_objs+=("$(json_window session Session "" "$SESSION_WINDOW" \
+            "$session_pct" "$session_reset" "$session_elapsed" \
+            "$session_pace" "$session_pace_indicator" "$session_pace_delta" \
+            "$session_pace_pct" "$session_pace_pts")")
+    fi
     _win_objs+=("$(json_window weekly Weekly "" "$WEEKLY_WINDOW" \
         "$weekly_pct" "$weekly_reset" "$weekly_elapsed" \
         "$weekly_pace" "$weekly_pace_indicator" "$weekly_pace_delta" \

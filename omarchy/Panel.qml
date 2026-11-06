@@ -329,7 +329,8 @@ Panel {
 
   // ---------------------------------------------------------------- bar face
 
-  readonly property var barWindowData: windowById(barWindowSetting === "Weekly" ? "weekly" : "session")
+  // An account with no 5-hour limit has no session window; show its weekly one.
+  readonly property var barWindowData: windowById(barWindowSetting === "Weekly" ? "weekly" : "session") || windowById("weekly")
 
   readonly property string barLabel: {
     if (!showLabel || vertical) return ""

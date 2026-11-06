@@ -16,6 +16,11 @@ assert_no_pango() {  # <name>
 FULL='{"five_hour":{"utilization":42,"resets_at":"2030-01-01T00:00:00+00:00"},"seven_day":{"utilization":77,"resets_at":"2030-01-01T00:00:00+00:00"},"seven_day_sonnet":{"utilization":15,"resets_at":"2030-01-01T00:00:00+00:00"},"limits":[{"kind":"weekly_scoped","percent":91,"resets_at":"2030-01-01T00:00:00+00:00","scope":{"model":{"display_name":"Fable"}}}],"extra_usage":{"is_enabled":true,"used_credits":250,"monthly_limit":5000}}'
 MIN='{"five_hour":{"utilization":42,"resets_at":"2030-01-01T00:00:00+00:00"},"seven_day":{"utilization":27,"resets_at":"2030-01-01T00:00:00+00:00"}}'
 
+echo "== no 5-hour limit (verified Ultra: five_hour null)"
+run_claudebar '{"five_hour":null,"seven_day":{"utilization":54,"resets_at":"2030-01-01T00:00:00+00:00"}}' --json
+assert_jq "no session window"     '[.windows[].id] | join(",")' 'weekly'
+assert_jq "max_pct from weekly"   '.max_pct'                 '54'
+
 echo "== full payload"
 run_claudebar_with_credits "$FULL" '{"amount":1000,"currency":"USD"}' --json
 assert_exit0     "exit 0"
