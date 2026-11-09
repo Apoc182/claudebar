@@ -6,7 +6,13 @@ set -uo pipefail
 SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/claudebar"
 PASS=0; FAIL=0
 export CLAUDEBAR_NO_WATCH=1
-export CLAUDEBAR_PRIME_SUB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/prime-sub-stub"
+export CLAUDEBAR_DISPENSER_KEY_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/dispenser-key"
+# The token dispenser's account list, as /api/accounts answers it, with BODY as
+# the OE account's usageData.
+dispenser_list() {  # <usage-body-json> [extra-account-fields-json]
+    printf '[{"name":"yotabyte-chatgpt","provider":"codex","usageData":{}},{"name":"claude-ecommerce","provider":"anthropic","priority":25,"paused":false,"requiresReauth":false,"usageData":%s}]' "$1" \
+        | jq -c --argjson x "${2:-{\}}" '.[1] += $x'
+}
 
 VALID_CREDS='{"claudeAiOauth":{"accessToken":"x","refreshToken":"y","expiresAt":4102444800000,"subscriptionType":"max","rateLimitTier":"default"}}'
 

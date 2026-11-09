@@ -301,21 +301,22 @@ PACE_TOLERANCE=$((10#$PACE_TOLERANCE))
 # In remaining mode, default the bar to "what's left" unless the user set their own format.
 [[ "$REMAINING" == "true" && "$FORMAT_SET" == "false" ]] && FORMAT="{session_remaining_pct}% · {session_reset}"
 
-API_URL="https://api.anthropic.com/api/oauth/usage"
-API_BASE_URL="https://api.anthropic.com"
 CACHE_DIR="$HOME/.cache/claudebar"
 
-# --- Prime Agent subs (fork) ---
-# Logins come from `prime-sub token <name>`, never from ~/.claude. prime-sub is
-# the only thing that refreshes them: a second refresher would rotate the
-# refresh token under Prime Agent and log it out. The account on show is kept
-# in a state file; with none, it is the sub Prime Agent is running on.
+# --- The token dispenser (fork) ---
+# Both Claude logins live in the token dispenser (better-ccflare on dionysis),
+# which refreshes them and polls their usage itself every 90 s. So this reads
+# the dispenser's account list and never holds a Claude token: a second
+# refresher would rotate a refresh token under the dispenser and log it out.
+# Its /api routes answer only an admin key. The account on show is kept in a
+# state file; with none, it is the first of ACCOUNTS.
 ACCOUNTS=(oe yb)
+declare -A DISPENSER_ACCOUNT=([oe]=claude-ecommerce [yb]=claude-yotabyte)
+DISPENSER_URL="${CLAUDEBAR_DISPENSER_URL:-http://100.64.0.8:8793}"
+DISPENSER_KEY_FILE="${CLAUDEBAR_DISPENSER_KEY_FILE:-$HOME/.secrets/Yotabyte/token-dispenser-claudebar-key}"
 ACCOUNT_STATE="${XDG_STATE_HOME:-$HOME/.local/state}/claudebar/account"
-PRIME_SUB="${CLAUDEBAR_PRIME_SUB:-prime-sub}"
 if [[ -z "$ACCOUNT" ]]; then
     ACCOUNT=$(head -c 16 "$ACCOUNT_STATE" 2>/dev/null | tr -dc 'a-z') || ACCOUNT=""
-    [[ -n "$ACCOUNT" ]] || ACCOUNT=$(head -c 16 "$HOME/.prime/subs/active" 2>/dev/null | tr -dc 'a-z') || ACCOUNT=""
     [[ -n "$ACCOUNT" ]] || ACCOUNT="${ACCOUNTS[0]}"
 fi
 if [[ "$TOGGLE_ACCOUNT" == "true" ]]; then
@@ -336,7 +337,7 @@ RETRY_AFTER_MAX=$((6 * 3600)) # cap for a bogus or hostile header
 # A 429 can also come with no wait at all: `retry-after: 0`, or no header.
 # Asking again on every poll then keeps the token's quota drained for good
 # (Nov 2026: the OE login answered 429 to every claudebar poll for three days
-# while prime-sub, asking every 10 min with the same token, mostly got 200).
+# while another client, asking every 10 min with the same token, mostly got 200).
 # So such a 429 backs off on its own: BACKOFF_BASE, doubling per consecutive
 # 429, capped at BACKOFF_MAX. A 200 resets the run.
 BACKOFF_BASE=300
@@ -409,13 +410,11 @@ token_is_safe() { # token_is_safe TOKEN
 }
 
 # The ONLY place a curl config file is built, so the check above cannot be
-# skipped by a future call site. Prints nothing and returns 1 for a token that
+# skipped by a future call site. Prints nothing and returns 1 for a key that
 # must not reach curl.
-curl_auth_cfg() { # curl_auth_cfg TOKEN
+curl_auth_cfg() { # curl_auth_cfg KEY
     token_is_safe "$1" || return 1
-    # The usage endpoint answers 429 (`retry-after: 0`) to every User-Agent but
-    # Claude Code's, curl's own and prime-agent's included (Nov 2026, OE login).
-    printf 'header = "Authorization: Bearer %s"\nheader = "anthropic-beta: oauth-2025-04-20"\nuser-agent = "claude-code/2.1.0"\n' "$1"
+    printf 'header = "x-api-key: %s"\nuser-agent = "claudebar"\n' "$1"
 }
 
 # Every curl below starts with `-q`, and it has to be the FIRST argument. curl
@@ -1058,20 +1057,13 @@ calc_pacing() {
 for cmd in curl jq date dd; do
     command -v "$cmd" &>/dev/null || die "Missing dependency: $cmd"
 done
-command -v "$PRIME_SUB" &>/dev/null || die "Missing dependency: prime-sub"
-
-# --- Read credentials from prime-sub ---
-# Stderr carries prime-sub's reason ("yb is logged out: ..."); it becomes the
-# error line. The token is checked by token_is_safe before any curl sees it.
-_ps_err=$(mktemp) || die "Cannot create temp file."
-creds=$(timeout 40 "$PRIME_SUB" token "$ACCOUNT" 2>"$_ps_err") || creds=""
-_ps_msg=$(head -c 300 "$_ps_err" | tr '\n' ' '); rm -f "$_ps_err"
-if ! jq -e '.access | strings' <<< "$creds" &>/dev/null; then
-    die "${ACCOUNT^^}: ${_ps_msg:-no login from prime-sub}\nRun <b>prime-sub login $ACCOUNT</b>."
-fi
-account_live=$(jq -r 'if .live then "true" else "false" end' <<< "$creds")
+# --- Read the dispenser key ---
+# Checked by token_is_safe (inside curl_auth_cfg) before any curl sees it.
+dispenser_key=$(read_bounded "$DISPENSER_KEY_FILE" 256) || dispenser_key=""
+dispenser_key="${dispenser_key//[[:space:]]/}"
+token_is_safe "$dispenser_key" || die "No dispenser key.\nPut an admin key for the token dispenser in $DISPENSER_KEY_FILE."
+account_live=false
 sub_type="${ACCOUNT^^}"
-[[ "$account_live" == "true" ]] && sub_type+=" · live"
 rate_tier=""
 
 # --- Cache / lock setup ---
@@ -1177,9 +1169,9 @@ _fetch_usage() {
         # fetch below already did this; both now do. A rejected token yields an
         # empty config, so curl asks unauthenticated and gets a 401 — it never
         # gets attacker-written option lines.
-        _resp_body=$(curl_auth_cfg "$access_token" | curl -q --config - -s --max-time 10 \
-            --proto '=https' --max-filesize "$MAX_RESP_BYTES" "${_hdr_opt[@]}" \
-            -w '\n%{http_code}' "$API_URL") || true
+        _resp_body=$(curl_auth_cfg "$dispenser_key" | curl -q --config - -s --max-time 10 \
+            --proto '=http,https' --max-filesize "$MAX_RESP_BYTES" "${_hdr_opt[@]}" \
+            -w '\n%{http_code}' "$DISPENSER_URL/api/accounts") || true
         # Belt for --max-filesize, and it is needed. Measured on curl 8.21.0: a
         # Content-Length past the cap is refused before a byte is read, but a
         # CHUNKED response is aborted only AFTER the cap is reached — and those
@@ -1228,6 +1220,23 @@ _fetch_usage() {
         fi
     fi
 
+    # The dispenser lists every account; this one's usageData is Anthropic's
+    # usage body as the dispenser last read it. A paused account, one that
+    # needs logging in again, or one missing from the list is said, not shown.
+    if [[ "$_http_code" == "200" ]] && [[ -n "$_resp_body" ]]; then
+        local _acct_state
+        _acct_state=$(jq -r --arg n "${DISPENSER_ACCOUNT[$ACCOUNT]}" '
+            [.[]? | objects | select(.name == $n)][0]
+            | if . == null then "missing" elif .paused then "paused"
+              elif .requiresReauth then "reauth" else "ok" end' <<< "$_resp_body" 2>/dev/null) || _acct_state=""
+        case "$_acct_state" in
+            missing) die "${ACCOUNT^^}: ${DISPENSER_ACCOUNT[$ACCOUNT]} is not in the token dispenser." ;;
+            paused)  die "${ACCOUNT^^}: paused in the token dispenser." ;;
+            reauth)  die "${ACCOUNT^^}: needs logging in again.\nLog it in on the token dispenser dashboard." ;;
+        esac
+        _resp_body=$(jq -c --arg n "${DISPENSER_ACCOUNT[$ACCOUNT]}" \
+            '[.[]? | objects | select(.name == $n)][0].usageData // empty' <<< "$_resp_body" 2>/dev/null) || _resp_body=""
+    fi
     # `five_hour` is null, not absent, while no session window is open.
     if [[ "$_http_code" == "200" ]] && [[ -n "$_resp_body" ]] && jq -e 'type == "object" and has("five_hour")' <<< "$_resp_body" &>/dev/null; then
         usage="$_resp_body"
@@ -1320,23 +1329,13 @@ if (( cache_age > NET_BOOT_CACHE_AGE )); then
 fi
 net_deadline=$(( SECONDS + net_budget ))
 
-access_token=$(jq -r 'try (.access // empty) catch empty' <<< "$creds")
-# A token that cannot go into a curl config file is not a token this script can
-# use at all, so it is dropped here and the empty check below reports it the
-# way a missing one is reported. Rejecting at the SOURCE, not at the call site,
-# is what keeps every later use safe.
-token_is_safe "$access_token" || access_token=""
-[[ -n "$access_token" ]] || die "${ACCOUNT^^}: no usable token.\nRun <b>prime-sub login $ACCOUNT</b>."
-# prime-sub hands out tokens with a minute or more left and refreshes them
-# itself, so there is no refresh here: a second refresher would rotate the
-# refresh token under Prime Agent and log it out.
 auth_ok=true
 refresh_failure_kind=""
 transient_stale=false
 
 _fetch_usage
 # No _fetch_balance: it finds the org through ~/.claude.json, which is the
-# claude CLI's account, not the prime-sub account on show.
+# claude CLI's account, not the dispenser account on show.
 exec 9>&-
 
 # A corrupt or partially-written cache could leave $usage as invalid JSON; the

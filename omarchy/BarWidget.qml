@@ -38,7 +38,7 @@ BarWidget {
     if ("anchorItem" in target) target.anchorItem = button
     if ("hostWidget" in target) target.hostWidget = root
     if ("bundledCmd" in target) target.bundledCmd = root.bundledCmd
-    // This fork's CLI lives in the clone; the AUR claudebar on PATH knows no prime-sub.
+    // This fork's CLI lives in the clone; the AUR claudebar on PATH knows no token dispenser.
     if ("resolvedBin" in target && root.bundledCmd !== "") target.resolvedBin = root.bundledCmd
   }
 
