@@ -98,13 +98,13 @@ _run_refresh_with_balance() {
     mkdir -p "$FETCH_HOME/.claude" "$FETCH_HOME/.cache/claudebar/oe" "$FETCH_HOME/bin"
     printf '%s' "$VALID_CREDS" > "$FETCH_HOME/.claude/.credentials.json"
     printf '%s' '{"oauthAccount":{"organizationUuid":"org-test"}}' > "$FETCH_HOME/.claude.json"
-    printf '%s' "$FUNDED" > "$FETCH_HOME/.usage_response"
+    dispenser_list "$FUNDED" > "$FETCH_HOME/.usage_response"
     printf '%s' '{"amount":2500,"balance":{"money":null,"credits":{"amount_minor":2500,"exponent":2}},"balance_credits":2500,"currency":"USD","auto_reload_settings":null,"expiry_policy_months":null,"last_paid_purchase_cents":null,"next_expires_at":null,"pending_invoice_amount_cents":null,"promo_tranches":[],"tranches":[]}' > "$FETCH_HOME/.credits_response"
     printf '%s\n' '#!/usr/bin/env bash' \
       'url=""' \
-      'for arg in "$@"; do [[ "$arg" == https://* ]] && url="$arg"; done' \
+      'for arg in "$@"; do [[ "$arg" == http*://* ]] && url="$arg"; done' \
       'case "$url" in' \
-      '  */api/oauth/usage) cat "$HOME/.usage_response"; printf "\n200" ;;' \
+      '  */api/accounts) cat "$HOME/.usage_response"; printf "\n200" ;;' \
       '  */prepaid/credits) cat "$HOME/.credits_response"; printf "\n200" ;;' \
       '  *) printf "%s\n404" "{\"error\":{\"message\":\"unexpected test URL\"}}" ;;' \
       'esac' > "$FETCH_HOME/bin/curl"
@@ -118,6 +118,6 @@ _run_refresh_with_balance() {
 _run_refresh_with_balance
 assert_exit0 "balance fetch: exit 0"
 # The fork never fetches prepaid credits (the org lookup is the claude CLI's
-# account, not the prime-sub one), so only the run itself is checked here.
+# account, not the dispenser one), so only the run itself is checked here.
 
 finish

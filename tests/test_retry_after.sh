@@ -13,6 +13,7 @@ export CLAUDEBAR_TEST_NET_RETRY_DELAY=1
 
 USAGE='{"five_hour":{"utilization":42,"resets_at":"2100-01-01T00:00:00Z"},"seven_day":{"utilization":10,"resets_at":"2100-01-01T00:00:00Z"}}'
 FRESH='{"five_hour":{"utilization":7,"resets_at":"2100-01-01T00:00:00Z"},"seven_day":{"utilization":8,"resets_at":"2100-01-01T00:00:00Z"}}'
+FRESH_LIST=$(dispenser_list "$FRESH")
 
 # One stub for every case: counts calls, answers $STUB_CODE, and writes the
 # response headers to the file behind `-D` the way curl does.
@@ -83,7 +84,7 @@ assert_calls          "429 + header: asked once" 1
 rm -rf "$THOME"
 
 # --- A live marker keeps the API untouched ---------------------------------
-STUB_CODE=200 STUB_BODY="$FRESH" _run_ra old future
+STUB_CODE=200 STUB_BODY="$FRESH_LIST" _run_ra old future
 assert_exit0       "live marker: exit 0"
 assert_json_valid  "live marker: valid JSON"
 assert_text_has    "live marker: serves the cache" "42%"
@@ -93,7 +94,7 @@ rm -rf "$THOME"
 
 # --- A live marker with no .last_error puts the time back in the tooltip ----
 # A token refresh that works removes .last_error; the marker outlives it.
-STUB_CODE=200 STUB_BODY="$FRESH" _run_ra old future
+STUB_CODE=200 STUB_BODY="$FRESH_LIST" _run_ra old future
 assert_tip_has "live marker, no .last_error: tooltip reports the wait" "Retry at"
 [[ "$(head -c3 "$THOME/.cache/claudebar/oe/.last_error" 2>/dev/null)" == "429" ]] \
     && _ok "live marker, no .last_error: rewritten as a 429" \
@@ -110,7 +111,7 @@ printf '%s' "$USAGE" > "$THOME/.cache/claudebar/oe/usage.json"
 touch -d "@$(( $(date +%s) - 1200 ))" "$THOME/.cache/claudebar/oe/usage.json"
 printf '%s' "$(( $(date +%s) + 600 ))" > "$THOME/.cache/claudebar/oe/.retry_at"
 printf '401\nRefresh failed' > "$THOME/.cache/claudebar/oe/.last_error"
-OUT=$(STUB_CODE=200 STUB_BODY="$FRESH" run_pinned "$THOME" "$SCRIPT"); RC=$?
+OUT=$(STUB_CODE=200 STUB_BODY="$FRESH_LIST" run_pinned "$THOME" "$SCRIPT"); RC=$?
 assert_exit0   "live marker + newer error: exit 0"
 assert_calls   "live marker + newer error: did NOT ask" 0
 assert_tip_has "live marker + newer error: the newer error stays" "Refresh failed"
@@ -133,7 +134,7 @@ printf '%s' "$STUB" > "$THOME/bin/curl" && chmod +x "$THOME/bin/curl"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$THOME/bin/notify-send" && chmod +x "$THOME/bin/notify-send"
 printf '%s' "$VALID_CREDS" > "$THOME/.claude/.credentials.json"
 printf '%s' "$_marker" > "$THOME/.cache/claudebar/oe/.retry_at"
-OUT=$(STUB_CODE=200 STUB_BODY="$FRESH" run_pinned "$THOME" "$SCRIPT"); RC=$?
+OUT=$(STUB_CODE=200 STUB_BODY="$FRESH_LIST" run_pinned "$THOME" "$SCRIPT"); RC=$?
 assert_exit0   "second run inside the window, no cache: exit 0"
 assert_calls   "second run inside the window, no cache: did NOT ask" 0
 assert_tip_has "second run inside the window, no cache: tooltip explains" "wait until"
@@ -180,18 +181,18 @@ _plain .tooltip | grep -qF "lib.sh" && _no "glob in message: cwd is not listed" 
 rm -rf "$THOME"
 
 # --- A marker that is not a plausible epoch is ignored ---------------------
-STUB_CODE=200 STUB_BODY="$FRESH" _run_ra old huge
+STUB_CODE=200 STUB_BODY="$FRESH_LIST" _run_ra old huge
 assert_exit0     "huge marker: exit 0"
 assert_calls     "huge marker: ignored, asked once" 1
 assert_no_marker "huge marker: the 200 cleared it"
 rm -rf "$THOME"
-STUB_CODE=200 STUB_BODY="$FRESH" _run_ra old garbage
+STUB_CODE=200 STUB_BODY="$FRESH_LIST" _run_ra old garbage
 assert_calls     "garbage marker: ignored, asked once" 1
 rm -rf "$THOME"
-STUB_CODE=200 STUB_BODY="$FRESH" _run_ra old none
+STUB_CODE=200 STUB_BODY="$FRESH_LIST" _run_ra old none
 printf '%s%22s%s' "$(( $(date +%s) + 600 ))" "" "junk" > "$THOME/.cache/claudebar/oe/.retry_at"
 touch -d "@$(( $(date +%s) - 1200 ))" "$THOME/.cache/claudebar/oe/usage.json"
-OUT=$(STUB_CODE=200 STUB_BODY="$FRESH" run_pinned "$THOME" "$SCRIPT"); RC=$?
+OUT=$(STUB_CODE=200 STUB_BODY="$FRESH_LIST" run_pinned "$THOME" "$SCRIPT"); RC=$?
 assert_calls     "truncated marker (epoch + padding + junk): ignored, asked twice" 2
 rm -rf "$THOME"
 
@@ -206,13 +207,13 @@ compgen -G "$THOME/.cache/claudebar/oe/.retry_at.*" >/dev/null && _no "dir at .r
 rm -rf "$THOME"
 
 # --- ...and --refresh does not get a free pass ------------------------------
-STUB_CODE=200 STUB_BODY="$FRESH" _run_ra old future --refresh
+STUB_CODE=200 STUB_BODY="$FRESH_LIST" _run_ra old future --refresh
 assert_exit0   "live marker + --refresh: exit 0"
 assert_calls   "live marker + --refresh: did NOT ask" 0
 rm -rf "$THOME"
 
 # --- An expired marker asks again; a 200 clears it -------------------------
-STUB_CODE=200 STUB_BODY="$FRESH" _run_ra old past
+STUB_CODE=200 STUB_BODY="$FRESH_LIST" _run_ra old past
 assert_exit0       "expired marker: exit 0"
 assert_text_has    "expired marker: fresh data" "7%"
 assert_calls       "expired marker: asked once" 1
@@ -255,7 +256,7 @@ printf '%s' "$(( $(date +%s) - 10 ))" > "$THOME/.cache/claudebar/oe/.retry_at"
 OUT=$(STUB_CODE=429 STUB_RETRY_AFTER=0 STUB_BODY='{"error":{"message":"x"}}' run_pinned "$THOME" "$SCRIPT"); RC=$?
 assert_marker_within  "many 429s: capped at 30 min" 1790 1800
 printf '%s' "$(( $(date +%s) - 10 ))" > "$THOME/.cache/claudebar/oe/.retry_at"
-OUT=$(STUB_CODE=200 STUB_BODY="$FRESH" run_pinned "$THOME" "$SCRIPT"); RC=$?
+OUT=$(STUB_CODE=200 STUB_BODY="$FRESH_LIST" run_pinned "$THOME" "$SCRIPT"); RC=$?
 assert_no_marker      "200 after backoff: marker cleared"
 [[ ! -e "$THOME/.cache/claudebar/oe/.backoff" ]] && _ok "200 after backoff: strike count reset" || _no "200 after backoff: strike count reset" "$(cat "$THOME/.cache/claudebar/oe/.backoff")"
 rm -rf "$THOME"
@@ -266,7 +267,7 @@ STUB_CODE=429 STUB_RETRY_AFTER=990 STUB_BODY='{"error":{"message":"x"}}' _run_ra
 rm -rf "$THOME"
 
 # --- Blocked with nothing cached still emits valid JSON, exit 0 ------------
-STUB_CODE=200 STUB_BODY="$FRESH" _run_ra none future
+STUB_CODE=200 STUB_BODY="$FRESH_LIST" _run_ra none future
 assert_exit0      "blocked, no cache: exit 0"
 assert_json_valid "blocked, no cache: valid JSON"
 assert_tip_has    "blocked, no cache: tooltip explains the wait" "wait until"

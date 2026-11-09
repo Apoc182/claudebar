@@ -27,9 +27,9 @@ assert_exit0     "exit 0"
 assert_json_valid "valid JSON"
 assert_no_pango  "no Pango markup"
 assert_jq "schema_version"        '.schema_version'          '2'
-assert_jq "plan label"            '.plan'                    'OE · live'
+assert_jq "plan label"            '.plan'                    'OE'
 assert_jq "account"               '.account'                 'oe'
-assert_jq "live"                  '.live'                    'true'
+assert_jq "live"                  '.live'                    'false'
 assert_jq "session used_pct"      '.windows[0].used_pct'     '42'
 assert_jq "session remaining_pct" '.windows[0].remaining_pct' '58'
 assert_jq "session id"            '.windows[0].id'           'session'
@@ -104,13 +104,14 @@ run_claudebar "$AMP" --json
 assert_jq "name round-trips raw"  '.windows[2].group' 'A&B <X>'
 
 echo "== error paths still emit schema_version JSON, exit 0"
-run_claudebar_creds '{}' "$MIN" --json
+CLAUDEBAR_DISPENSER_KEY_FILE=/nonexistent run_claudebar "$MIN" --json
 assert_exit0      "no-token creds: exit 0"
 assert_json_valid "no-token creds: valid JSON"
 assert_jq "no-token creds: schema_version" '.schema_version' '2'
 assert_jq "no-token creds: error message"  '.error.message | length > 0' 'true'
 assert_no_pango   "no-token creds: no <b>/<span> markup"
-run_claudebar_creds 'not json' "$MIN" --json
+_badkey=$(mktemp); printf 'not "a key' > "$_badkey"
+CLAUDEBAR_DISPENSER_KEY_FILE="$_badkey" run_claudebar "$MIN" --json; rm -f "$_badkey"
 assert_json_valid "invalid creds file: valid JSON"
 assert_jq "invalid creds file: error set"  '.error | type' 'object'
 
@@ -323,11 +324,11 @@ assert_json_valid "color name: valid JSON"
     || _no "color name: reaches the markup" "$(jq -r .text <<<"$OUT")"
 
 echo "== die() messages carry no literal backslash-n"
-run_claudebar_creds '{}' "$MIN" --json
+CLAUDEBAR_DISPENSER_KEY_FILE=/nonexistent run_claudebar "$MIN" --json
 assert_jq "structured error is one flat line" '.error.message | test("\\\\n") | not' 'true'
-assert_jq "structured error keeps its words"  '.error.message | test("Run prime-sub login oe")' 'true'
-run_claudebar_creds '{}' "$MIN"
-assert_tip_has "waybar tooltip breaks the line for real" "oe is logged out"
+assert_jq "structured error keeps its words"  '.error.message | test("Put an admin key")' 'true'
+CLAUDEBAR_DISPENSER_KEY_FILE=/nonexistent run_claudebar "$MIN"
+assert_tip_has "waybar tooltip breaks the line for real" "No dispenser key"
 _nl_count=$(jq -r '.tooltip' <<<"$OUT" | wc -l)
 [[ "$_nl_count" -eq 2 ]] && _ok "waybar tooltip is two rendered lines" \
     || _no "waybar tooltip is two rendered lines" "got $_nl_count"

@@ -121,7 +121,7 @@ cnt="$HOME/.curl_count"
 n=$(( $(cat "$cnt" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$cnt"
 if (( n < 3 )); then exit 1; fi
-printf "%s\n200" "{\"five_hour\":{\"utilization\":77,\"resets_at\":\"2100-01-01T00:00:00Z\"},\"seven_day\":{\"utilization\":10,\"resets_at\":\"2100-01-01T00:00:00Z\"}}"
+printf "%s\n200" "[{\"name\":\"claude-ecommerce\",\"provider\":\"anthropic\",\"usageData\":{\"five_hour\":{\"utilization\":77,\"resets_at\":\"2100-01-01T00:00:00Z\"},\"seven_day\":{\"utilization\":10,\"resets_at\":\"2100-01-01T00:00:00Z\"}}}]"
 '
 _run_transient "$RETRY_STUB" old
 assert_exit0       "retry recovers: exit 0"

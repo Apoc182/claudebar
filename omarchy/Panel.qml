@@ -116,7 +116,7 @@ Panel {
   // The command that runs. PATH first, always: the AUR release must win
   // when it exists. Changes to bundledCmd only after a failed START, and
   // keeps that value until the shell restarts.
-  // This fork's CLI lives in the clone; the AUR claudebar on PATH knows no prime-sub.
+  // This fork's CLI lives in the clone; the AUR claudebar on PATH knows no token dispenser.
   readonly property string forkBin: {
     var u = String(Qt.resolvedUrl("../claudebar"))
     return u.indexOf("file://") === 0 ? decodeURIComponent(u.substring(7)) : binName
@@ -142,7 +142,7 @@ Panel {
     startRun(buildCmd(force === true))
   }
 
-  // prime-sub account on show (oe / yb), from the last document of any kind.
+  // dispenser account on show (oe / yb), from the last document of any kind.
   property string account: ""
 
   function switchAccount() {
